@@ -21,13 +21,23 @@
     "appId": "com.lumonui.castunn",
     "productName": "Castunn",
     "win": {
-        "target": "nsis",
-        "icon": "assets/icon.ico"
+      "target": "nsis",
+      "icon": "assets/icon.ico"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "assets/icon.png",
+      "category": "Utility"
     },
     "extraResources": [
-        { "from": "server.js", "to": "server.js" }
+      {
+        "from": "server.js",
+        "to": "server.js"
+      }
     ],
-    "asarUnpack": ["node_modules/**/*"],
+    "asarUnpack": [
+      "node_modules/**/*"
+    ],
     "publish": [
       {
         "provider": "github",
@@ -35,5 +45,8 @@
         "repo": "castunn"
       }
     ]
+  },
+  "allowScripts": {
+    "electron@31.7.7": true
   }
 }
