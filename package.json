@@ -1,0 +1,39 @@
+{
+  "name": "castunn",
+  "version": "1.2.0",
+  "author": "Lumonui",
+  "main": "main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder -w"
+  },
+  "dependencies": {
+    "express": "^4.19.0",
+    "ws": "^8.16.0",
+    "electron-updater": "^6.3.0"
+  },
+  "devDependencies": {
+    "electron": "^31.0.0",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.lumonui.castunn",
+    "productName": "Castunn",
+    "win": {
+        "target": "nsis",
+        "icon": "assets/icon.ico"
+    },
+    "extraResources": [
+        { "from": "server.js", "to": "server.js" }
+    ],
+    "asarUnpack": ["node_modules/**/*"],
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Lumonui",
+        "repo": "castunn"
+      }
+    ]
+  }
+}

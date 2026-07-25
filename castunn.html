@@ -1,0 +1,2239 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <title>Castunn</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <style>
+   /* Catppuccin Mocha + Glassmorphism */
+
+/* ── Variables ─────────────────────────────────────────────── */
+:root {
+  --bg:        #11111b;
+  --bg2:       #181825;
+  --fg:        #cdd6f4;
+  --fg-muted:  #a6adc8;
+  --accent:    #89b4fa;
+  --accent2:   #74c7ec;
+  --ok:        #a6e3a1;
+  --ko:        #f38ba8;
+  --warn:      #fab387;
+  --error:     #f38ba8;
+  --card:      rgba(30, 30, 48, 0.85);
+  --card-border: rgba(137, 180, 250, 0.12);
+  --btn:       rgba(49, 50, 68, 0.9);
+  --btn-border: rgba(137, 180, 250, 0.18);
+  --btnh:      rgba(69, 71, 90, 0.95);
+  --input-bg:  rgba(17, 17, 27, 0.8);
+  --console-bg: rgba(15, 15, 24, 0.9);
+  --radius:    10px;
+  --radius-lg: 14px;
+  --shadow-card: 0 4px 24px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.04) inset;
+  --shadow-btn:  0 2px 8px rgba(0,0,0,0.35);
+  --glow-accent: 0 0 12px rgba(137,180,250,0.25);
+  --transition: 160ms cubic-bezier(.4,0,.2,1);
+}
+
+/* ── Reset & base ───────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  padding: 24px 22px 40px;
+  min-height: 100vh;
+  background:
+    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(137,180,250,.07) 0%, transparent 60%),
+    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(116,199,236,.05) 0%, transparent 55%),
+    var(--bg);
+  color: var(--fg);
+  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  font-size: 14px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* ── En-tête ────────────────────────────────────────────────── */
+h1 {
+  margin: 0 0 14px;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: .02em;
+  background: linear-gradient(110deg, var(--accent) 0%, var(--accent2) 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  text-shadow: none;
+}
+
+h1 + .row {
+  margin-bottom: 0;
+}
+
+small { color: var(--fg-muted); font-size: 12px; }
+
+/* ── Pill / statuts ─────────────────────────────────────────── */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  background: rgba(24, 24, 37, 0.9);
+  border: 1px solid rgba(137,180,250,.14);
+  font-size: 12.5px;
+  color: var(--fg-muted);
+  backdrop-filter: blur(8px);
+  transition: border-color var(--transition);
+}
+.pill:hover { border-color: rgba(137,180,250,.28); }
+
+.status { font-weight: 700; font-size: 12px; letter-spacing: .03em; }
+.status.ok {
+  color: var(--ok);
+  text-shadow: 0 0 8px rgba(166,227,161,.45);
+}
+.status.ko {
+  color: var(--ko);
+  text-shadow: 0 0 8px rgba(243,139,168,.35);
+}
+
+/* ── Séparateur ─────────────────────────────────────────────── */
+.sep {
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(137,180,250,.18) 30%, rgba(137,180,250,.18) 70%, transparent);
+  margin: 14px 0;
+}
+
+/* ── Tabs ───────────────────────────────────────────────────── */
+.tabs {
+  display: flex;
+  gap: 6px;
+  margin: 0 0 16px;
+  background: rgba(17,17,27,.7);
+  border: 1px solid rgba(137,180,250,.12);
+  border-radius: 999px;
+  padding: 4px;
+  width: fit-content;
+  backdrop-filter: blur(8px);
+}
+
+.tabs button {
+  border-radius: 999px;
+  padding: 6px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  background: transparent;
+  border: none;
+  color: var(--fg-muted);
+  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
+}
+
+.tabs button:hover {
+  background: rgba(137,180,250,.1);
+  color: var(--fg);
+}
+
+.tabs button.active,
+.tabs button[aria-selected="true"] {
+  background: rgba(137,180,250,.18);
+  color: var(--accent);
+  box-shadow: 0 0 0 1px rgba(137,180,250,.3);
+}
+
+/* ── Grille ─────────────────────────────────────────────────── */
+.grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+  align-items: start;
+}
+
+/* ── Cards ──────────────────────────────────────────────────── */
+.card {
+  background: var(--card);
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  padding: 18px 20px;
+  box-shadow: var(--shadow-card);
+  backdrop-filter: blur(12px);
+  transition: border-color var(--transition), box-shadow var(--transition);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Subtil reflet supérieur */
+.card::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.07) 40%, rgba(255,255,255,.07) 60%, transparent);
+  pointer-events: none;
+}
+
+.card:hover {
+  border-color: rgba(137,180,250,.22);
+  box-shadow: var(--shadow-card), var(--glow-accent);
+}
+
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .03em;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* ── Labels & inputs ────────────────────────────────────────── */
+label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+  margin: 10px 0 5px;
+}
+
+input[type=text],
+input[type=url],
+input[type=file] {
+  width: 100%;
+  padding: 9px 12px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(60,63,82,.8);
+  background: var(--input-bg);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+
+input[type=text]::placeholder,
+input[type=url]::placeholder {
+  color: rgba(166,173,200,.45);
+}
+
+input[type=text]:focus,
+input[type=url]:focus {
+  border-color: rgba(137,180,250,.5);
+  box-shadow: 0 0 0 3px rgba(137,180,250,.1);
+}
+
+input[type=file] {
+  padding: 7px 10px;
+  cursor: pointer;
+  color: var(--fg-muted);
+  font-size: 12.5px;
+}
+input[type=file]::-webkit-file-upload-button {
+  background: var(--btn);
+  color: var(--fg);
+  border: 1px solid var(--btn-border);
+  border-radius: 6px;
+  padding: 4px 10px;
+  margin-right: 8px;
+  cursor: pointer;
+  font-size: 12px;
+  transition: background var(--transition);
+}
+input[type=file]::-webkit-file-upload-button:hover {
+  background: var(--btnh);
+}
+
+/* ── Boutons ────────────────────────────────────────────────── */
+button {
+  padding: 8px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--btn-border);
+  background: var(--btn);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  white-space: nowrap;
+  box-shadow: var(--shadow-btn);
+  transition:
+    background var(--transition),
+    border-color var(--transition),
+    box-shadow var(--transition),
+    transform 80ms ease,
+    color var(--transition);
+  outline: none;
+}
+
+button:hover {
+  background: var(--btnh);
+  border-color: rgba(137,180,250,.3);
+  box-shadow: 0 2px 12px rgba(0,0,0,.45);
+}
+
+button:active {
+  transform: translateY(1px);
+  box-shadow: none;
+}
+
+button:focus-visible {
+  box-shadow: 0 0 0 3px rgba(137,180,250,.35);
+}
+
+/* Bouton principal (Enregistrer) */
+.btn.primary {
+  background: linear-gradient(135deg, rgba(100,130,220,.55) 0%, rgba(80,110,200,.4) 100%);
+  border-color: rgba(137,180,250,.4);
+  color: var(--accent);
+  font-weight: 600;
+}
+.btn.primary:hover {
+  background: linear-gradient(135deg, rgba(120,150,240,.65) 0%, rgba(100,130,220,.5) 100%);
+  border-color: rgba(137,180,250,.6);
+  box-shadow: 0 0 16px rgba(137,180,250,.2);
+}
+
+/* Boutons stop / destructifs visuels */
+#btnStop {
+  border-color: rgba(243,139,168,.25);
+  color: var(--ko);
+}
+#btnStop:hover {
+  background: rgba(243,139,168,.12);
+  border-color: rgba(243,139,168,.45);
+}
+
+/* Boutons d'activation / désactivation */
+#btnActivate {
+  border-color: rgba(166,227,161,.25);
+  color: var(--ok);
+}
+#btnActivate:hover {
+  background: rgba(166,227,161,.1);
+  border-color: rgba(166,227,161,.45);
+}
+
+#btnDeactivate {
+  border-color: rgba(243,139,168,.2);
+  color: var(--ko);
+}
+#btnDeactivate:hover {
+  background: rgba(243,139,168,.08);
+  border-color: rgba(243,139,168,.4);
+}
+
+/* ── Row ────────────────────────────────────────────────────── */
+.row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+/* ── Barre de progression ───────────────────────────────────── */
+progress {
+  width: 200px;
+  height: 6px;
+  display: none;
+  border: none;
+  border-radius: 999px;
+  overflow: hidden;
+  background: rgba(137,180,250,.12);
+  vertical-align: middle;
+}
+progress::-webkit-progress-bar {
+  background: rgba(137,180,250,.12);
+  border-radius: 999px;
+}
+progress::-webkit-progress-value {
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  border-radius: 999px;
+  transition: width .2s ease;
+}
+progress::-moz-progress-bar {
+  background: linear-gradient(90deg, var(--accent2), var(--accent));
+  border-radius: 999px;
+}
+
+/* ── Console / log ──────────────────────────────────────────── */
+.console {
+  max-height: 180px;
+  overflow: auto;
+  border: 1px solid rgba(69,71,90,.6);
+  border-radius: var(--radius);
+  padding: 10px 12px;
+  font-size: 12px;
+  font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
+  line-height: 1.65;
+  background: var(--console-bg);
+  white-space: pre-wrap;
+  color: var(--fg-muted);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(137,180,250,.25) transparent;
+}
+.console::-webkit-scrollbar { width: 4px; }
+.console::-webkit-scrollbar-track { background: transparent; }
+.console::-webkit-scrollbar-thumb { background: rgba(137,180,250,.25); border-radius: 999px; }
+
+/* ── Lecteurs ────────────────────────────────────────────────── */
+.players { display: grid; gap: 10px; }
+
+video {
+  max-width: 100%;
+  height: auto;
+  background: #000;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,.5);
+}
+
+img#imageViewer,
+img#localImage {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  display: none;
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
+}
+
+audio {
+  width: 100%;
+  border-radius: var(--radius);
+  filter: invert(0.88) hue-rotate(180deg) saturate(0.8);
+}
+
+/* ── Labels visuels dans les cards ─────────────────────────── */
+strong {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+/* ── Utilitaires ────────────────────────────────────────────── */
+.muted { color: var(--fg-muted); }
+.hidden { display: none !important; }
+
+/* ── Engrenage / bouton settings ────────────────────────────── */
+.settings-gear {
+  position: fixed;
+  top: 16px;
+  right: 18px;
+  z-index: 1100;
+  width: 36px;
+  height: 36px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  border: 1px solid rgba(137,180,250,.18);
+  background: rgba(17,17,27,.75);
+  backdrop-filter: blur(10px);
+  cursor: pointer;
+  user-select: none;
+  box-shadow: 0 2px 12px rgba(0,0,0,.4);
+  transition: transform .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
+  color: var(--fg-muted);
+}
+.settings-gear:hover {
+  transform: rotate(35deg) scale(1.08);
+  background: rgba(30,30,50,.9);
+  border-color: rgba(137,180,250,.4);
+  box-shadow: 0 0 16px rgba(137,180,250,.2);
+  color: var(--accent);
+}
+.settings-gear svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  display: block;
+}
+
+/* ── Modal paramètres ───────────────────────────────────────── */
+.settings-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0,0,0,.6);
+  backdrop-filter: blur(4px);
+}
+.settings-modal[aria-hidden="false"] { display: flex; }
+
+.settings-card {
+  width: min(540px, 93vw);
+  padding: 24px 22px 20px;
+  border-radius: var(--radius-lg);
+  border: 1px solid rgba(137,180,250,.15);
+  background: rgba(20,21,34,.97);
+  color: var(--fg);
+  box-shadow: 0 20px 50px rgba(0,0,0,.6), 0 1px 0 rgba(255,255,255,.05) inset;
+  font-family: inherit;
+  backdrop-filter: blur(20px);
+  animation: modal-in .18s cubic-bezier(.4,0,.2,1);
+}
+
+@keyframes modal-in {
+  from { opacity: 0; transform: translateY(12px) scale(.97); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+.settings-card h2 {
+  margin: 0 0 16px;
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--accent);
+  letter-spacing: .03em;
+}
+
+.settings-row { display: grid; gap: 6px; margin: 14px 0; }
+
+.settings-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--fg-muted);
+}
+
+.settings-input {
+  width: 100%;
+  padding: 10px 13px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(60,63,82,.9);
+  outline: none;
+  background: rgba(11,11,20,.8);
+  color: var(--fg);
+  font-size: 13.5px;
+  font-family: inherit;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.settings-input::placeholder { color: rgba(127,132,154,.55); }
+.settings-input:focus {
+  border-color: rgba(137,180,250,.5);
+  box-shadow: 0 0 0 3px rgba(137,180,250,.1);
+}
+
+.settings-actions {
+  display: flex;
+  gap: 10px;
+  justify-content: flex-end;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid rgba(137,180,250,.1);
+}
+
+/* Boutons .btn dans la modal */
+.btn {
+  padding: 9px 16px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(60,63,82,.8);
+  background: rgba(42,45,65,.8);
+  color: var(--fg);
+  font-size: 13px;
+  font-family: inherit;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
+}
+.btn:hover { background: rgba(60,63,82,.9); border-color: rgba(137,180,250,.25); }
+.btn:focus { outline: 2px solid rgba(137,180,250,.45); outline-offset: 2px; }
+
+/* ── Tchat ──────────────────────────────────────────────────── */
+#chatLog {
+  max-height: 220px;
+  margin-bottom: 10px;
+  font-family: 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
+}
+
+#chatInput {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ── Scrollbar globale ──────────────────────────────────────── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(137,180,250,.2); border-radius: 999px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(137,180,250,.38); }
+
+/* Masque le <br> parasite dans la grille */
+.grid > br {
+  display: none;
+}
+
+/* Emetteur et Récepteur occupent toujours colonne 1 / ligne 1 */
+#emitter,
+#receiver {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+/* Tchat ancré en colonne 2 / ligne 1, en face */
+#chat {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+#emitter.drag-over {
+  border-color: rgba(137,180,250,.55);
+  box-shadow: var(--shadow-card), 0 0 0 3px rgba(137,180,250,.15);
+  background: rgba(137,180,250,.05);
+}
+  </style>
+</head>
+<body>
+  <!-- <h1>Castunn</h1> -->
+  <div class="row muted">
+    <span class="pill">WS : <span id="wsStatus" class="status ko">Déconnecté</span></span>
+    <span class="pill">RTC (P2P) : <span id="rtcStatus" class="status ko">Déconnecté</span></span>
+    <span class="pill">Activation récepteur : <span id="activationStatus" class="status ko">Désactivé</span></span>
+    <span class="pill" id="peersPill" title="Aucun pair connecté">Pairs : <span id="peersCount">0</span></span>
+  </div>
+  <div class="sep"></div>
+
+  <div class="tabs">
+    <button id="tabCtrl">Emetteur</button>
+    <button id="tabRecv">Récepteur</button>
+  </div>
+
+  <div class="grid">
+    <!-- Emetteur -->
+    <section id="emitter" class="card">
+      <h2>Emetteur</h2>
+      <div>
+        <label for="audioUrl">URL audio</label>
+        <div class="row">
+          <input type="url" id="audioUrl" placeholder="https://.../fichier.mp3" />
+          <button id="btnSendAudioUrl">Envoyer URL audio</button>
+        </div>
+
+        <label for="videoUrl">URL vidéo</label>
+        <div class="row">
+          <input type="url" id="videoUrl" placeholder="https://.../fichier.mp4" />
+          <button id="btnSendVideoUrl">Envoyer URL vidéo</button>
+        </div>
+
+        <label for="imageUrl">URL image</label>
+        <div class="row">
+          <input type="url" id="imageUrl" placeholder="https://.../image.jpg" />
+          <button id="btnSendImageUrl">Envoyer URL image</button>
+        </div>
+
+        <label for="mediaFile">Fichier (audio/vidéo/image/...)</label>
+        <div class="row">
+          <input type="file" id="mediaFile" />
+          <button id="btnSendMediaFile">Envoyer fichier</button>
+          <progress id="uploadProgress" value="0" max="100"></progress>
+          <span id="progressText" class="muted"></span>
+        </div>
+
+        <div class="row" style="margin-top:6px">
+		  <button id="btnShareScreen">Partager l'écran</button> 
+		  <button id="btnStop">Stop</button>
+		  <button id="btnPing">Ping</button>
+		</div>
+
+        <div class="sep"></div>
+        <strong>Console</strong>
+        <div id="consoleLog" class="console"></div>
+        <div id="ctrlError" class="muted" style="color:var(--error);margin-top:8px"></div>
+        
+        <!-- Mon média : SOUS-PANNEAU de la carte Émetteur -->
+        <div class="sep"></div>
+        <strong>Mon média</strong>
+        <div id="localPlaceholder" class="muted">(aucun média récemment envoyé)</div>
+        <div id="localPanel" class="hidden">
+          <div class="players" style="margin-top:10px">
+            <audio id="localAudio" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback"></audio>
+            <video id="localVideo" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture></video>
+            <img id="localImage" alt="Image locale" style="display:none;max-width:100%;height:auto;border-radius:8px" />
+          </div>
+          <div class="row" style="margin-top:6px">
+            <button id="localClose">Fermer</button>
+          </div>
+          <div id="localErr" class="muted" style="color:var(--error);margin-top:8px"></div>
+        </div>
+
+      </div>
+    </section>
+
+    <!-- Récepteur -->
+    <section id="receiver" class="card">
+      <h2>Récepteur</h2>
+      <div class="row">
+        <button id="btnActivate">Activer</button>
+        <button id="btnDeactivate">Désactiver</button>
+      </div>
+
+      <div class="players" style="margin-top:10px">
+        <audio id="audioPlayer" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback"></audio>
+        <video id="videoPlayer" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture></video>
+        <img id="imageViewer" alt="Image reçue" />
+      </div>
+
+      <div id="recvError" class="muted" style="color:var(--error);margin-top:8px"></div>
+      <small class="muted">Astuce : « Activer » débloque éventuellement l’autoplay (protection du navigateur).</small>
+    </section>
+
+    <!-- Tchat (visible en permanence) : largeur = un panneau -->
+	<br>
+    <section id="chat" class="card">
+      <h2>Tchat</h2>
+      <div id="chatLog" class="console" style="max-height:220px"></div>
+      <div class="row">
+        <input type="text" id="chatInput" placeholder="Votre message..." />
+        <button id="chatSend">Envoyer</button>
+      </div>
+    </section>
+  </div>
+  
+  <button id="settingsBtn" class="settings-gear" title="Paramètres" aria-label="Paramètres">
+  <svg viewBox="0 0 24 24" fill="none" aria-hidden="true">
+    <path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Z" stroke="currentColor" stroke-width="1.6"/>
+    <path d="M19.4 15.5c.12-.42.2-.86.2-1.32s-.07-.9-.2-1.32l2.02-1.57a.7.7 0 0 0 .16-.93l-1.9-3.29a.7.7 0 0 0-.85-.32l-2.38.96a7 7 0 0 0-2.28-1.32l-.36-2.53a.7.7 0 0 0-.7-.6H10.7a.7.7 0 0 0-.69.6l-.36 2.53c-.83.29-1.6.73-2.28 1.32l-2.38-.96a.7.7 0 0 0-.85.32L2.45 9.04a.7.7 0 0 0 .16.93l2.02 1.57c-.12.42-.2.86-.2 1.32s.07.9.2 1.32L2.6 15.8a.7.7 0 0 0-.16.93l1.9 3.29c.18.31.55.44.86.32l2.38-.96c.68.59 1.45 1.03 2.28 1.32l.36 2.53c.06.35.36.6.7.6h3.1c.35 0 .64-.25.7-.6l.36-2.53c.83-.29 1.6-.73 2.28-1.32l2.38.96c.31.12.68-.01.86-.32l1.9-3.29a.7.7 0 0 0-.16-.93l-2.02-1.57Z" stroke="currentColor" stroke-width="1.6"/>
+  </svg>
+	</button>
+
+	<div id="settingsModal" class="settings-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+	  <div class="settings-card">
+		<h2 id="settingsTitle">Paramètres</h2>
+		<form id="settingsForm">
+		  <div class="settings-row">
+			<label for="serverIp" class="settings-label">IP/URL du serveur de signalisation</label>
+			<input id="serverIp" name="serverIp" class="settings-input" type="text" placeholder="ex. wss://signal.example.org" autocomplete="off" />
+		  </div>
+		  <div class="settings-row">
+			<label for="nickname" class="settings-label">Pseudo</label>
+			<input id="nickname" name="nickname" class="settings-input" type="text" placeholder="Votre pseudo" autocomplete="nickname" />
+		  </div>
+		  <div class="settings-row" id="localServerRow" style="display:none">
+		  <label class="settings-label">Serveur de signalisation local (LAN)</label>
+		  <div class="row" style="gap:10px;align-items:center">
+			<button type="button" class="btn" id="btnToggleServer">Lancer le serveur local</button>
+			<span id="localServerStatus" style="font-size:12px;color:#7f849a"></span>
+		  </div>
+		  <p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			Démarre un serveur Castunn en arrière-plan sur le port 8080. Laissez le champ IP vide pour s'y connecter automatiquement.
+		  </p>
+		  </div>
+		  Castunn v.1.2 du 23-07-2026
+		  <div class="settings-actions">
+			<button type="button" class="btn" id="settingsCancel">Annuler</button>
+			<button type="submit" class="btn primary">Enregistrer</button>
+		  </div>
+		</form>
+	  </div>
+	</div>
+
+  <script>
+  /* === Etat global === */
+  let socket;
+  let userIP = '';
+  let userNick = '';
+  let isActivated = false;
+  let ignoreMedia = false; // drop total des médias tant que désactivé
+  let dropCurrentBlob = false;
+  
+  const peersMap = new Map(); // peerId → { ip, nick }
+  
+  function updatePeersDisplay() {
+    const el = document.getElementById('peersCount');
+    const pill = document.getElementById('peersPill');
+    if (!el) return;
+    el.textContent = peersMap.size;
+    const names = [...peersMap.values()]
+      .map(p => p.nick ? `${p.ip} (${p.nick})` : (p.ip || '?'))
+      .join('\n');
+    pill.title = names || 'Aucun pair connecté';
+  }
+  
+  function sendAnnounce() {
+    if (socket?.readyState === 1) {
+      socket.send(JSON.stringify({
+        type: 'announce',
+        ip: userIP || '',
+        nick: (window.__nickname || '').trim()
+      }));
+    }
+  }
+
+  const wsStatus = document.getElementById('wsStatus');
+  const activationStatus = document.getElementById('activationStatus');
+  const ctrlError = document.getElementById('ctrlError');
+  const recvError = document.getElementById('recvError');
+  const consoleLog = document.getElementById('consoleLog');
+
+  const audioPlayer = document.getElementById('audioPlayer');
+  const videoPlayer = document.getElementById('videoPlayer');
+  const imageViewer = document.getElementById('imageViewer');
+
+  const chatLog = document.getElementById('chatLog');
+  const chatInput = document.getElementById('chatInput');
+  const chatSend = document.getElementById('chatSend');
+
+  audioPlayer.setAttribute('controlsList','nodownload noplaybackrate noremoteplayback');
+  videoPlayer.setAttribute('controlsList','nodownload noplaybackrate noremoteplayback');
+  try { videoPlayer.disablePictureInPicture = true; } catch{}
+
+  // --- WebRTC ---
+  const rtcStatus = document.getElementById('rtcStatus');
+  const RTCPeer =
+    window.RTCPeerConnection ||
+    window.webkitRTCPeerConnection ||
+    window.mozRTCPeerConnection ||
+    null;
+
+  function isElectron() {
+    return navigator.userAgent && navigator.userAgent.includes('Electron');
+  }
+  function hasWebRTC() {
+    const RTCPeer =
+      window.RTCPeerConnection || window.webkitRTCPeerConnection || window.mozRTCPeerConnection || null;
+    // Autorise si HTTPS, localhost, ou Electron
+    return !!RTCPeer && (window.isSecureContext || location.hostname === 'localhost' || isElectron());
+  }
+
+  let pc = null;             // RTCPeerConnection
+  let dc = null;             // RTCDataChannel
+  let myId = null;           // id WS donné par le serveur (hello)
+  let peerId = null;         // id distant choisi
+  const room = 'default';    // simple room (tu peux la rendre paramétrable)
+
+  let receivedChunks = [];
+  let currentMime = '';
+  let currentKind = ''; // 'audio' | 'video' | 'image' | 'file'
+  let currentFilename = '';
+
+  function setRtcStatus(text) {
+    rtcStatus.textContent = text;
+    if (text === 'Connecté') { rtcStatus.classList.add('ok'); rtcStatus.classList.remove('ko'); }
+    else { rtcStatus.classList.remove('ok'); rtcStatus.classList.add('ko'); }
+  }
+
+  function rtcReady() { 
+    let isReady = dc && dc.readyState === 'open';
+    if (isReady) {
+      setRtcStatus('Connecté');
+    } else {
+      setRtcStatus('Déconnecté');
+    }
+    return isReady;
+  }
+
+  // Adresse du serveur de signalisation Cloudflare Workers
+  const CF_WORKER_URL = ''; 
+  // ex: 'wss://castunn-signal.sous-domaine.workers.dev/ws?room=default';
+
+  function readModalHost() {
+    return (typeof window.__signalIp === 'string' && window.__signalIp.trim())
+      ? window.__signalIp.trim()
+      : '';
+  }
+
+  function buildWsUrlFromInput() {
+    const raw = readModalHost();
+    if (!raw) return null;
+
+    // Déjà ws:// ou wss:// → ok tel quel
+    if (/^wss?:\/\//i.test(raw)) return raw;
+
+    // Si l'utilisateur met http(s):// → convertir en ws(s)://
+    if (/^https?:\/\//i.test(raw)) {
+      return raw.replace(/^http/i, 'ws');
+    }
+
+    // Sinon, c'est un host:port → on préfixe selon le contexte
+    const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+    return `${scheme}://${raw}`;
+  }
+
+  function defaultSignalUrl() {
+    // Priorité au Worker si renseigné
+    if (CF_WORKER_URL) return CF_WORKER_URL;
+
+    // Si on est en file://, pas de host → fallback localhost
+    if (location.protocol === 'file:') return 'ws://192.168.1.16:8080';
+
+    // Sinon, on utilise le host courant (si présent)
+    const host = location.host || '192.168.1.16:8080';
+    const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
+    return `${scheme}://${host}`;
+  }
+
+  function resolveSignalUrl() {
+    // 1) ce que l'utilisateur a tapé ; 2) fallback par défaut
+    return buildWsUrlFromInput() || defaultSignalUrl();
+  }
+
+  // Reconnexion propre en lisant la valeur de la modale (ou le fallback)
+  function connectFromModal() {
+    const url = resolveSignalUrl();
+    if (!url) {
+      addConsole('[WS] Aucune URL fournie (modale vide et aucun fallback).');
+      setWsStatus('Erreur URL');
+      return;
+    }
+
+    if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      try {
+        const oldSocket = socket;
+        oldSocket.onclose = () => createSocket(url); // n’ouvre qu’après fermeture
+        oldSocket.close(1000, 'reconnect');
+        return; // on sort pour ne pas appeler createSocket tout de suite
+      } catch {}
+    }
+
+    createSocket(url);
+  }
+
+  function getDisplayName() {
+    const ip = (window.userIP || '').trim();
+    const nick = (window.__nickname || '').trim();
+    if (!ip) return 'inconnu';          // pas d'IP => on n'affiche PAS "(pseudo)"
+    return nick ? `${ip}(${nick})` : ip; // IP seule si pas de pseudo
+  }
+
+  // Envoi « application » : passe par RTC si possible, sinon WS
+  function sendApp(obj){
+    const payload = (typeof obj === 'string') ? obj : JSON.stringify(obj);
+    if (rtcReady()) { try { dc.send(payload); return true; } catch{} }
+    return sendJSON(obj); // ta fonction WS existante
+  }
+
+  function guessMimeByExt(name){
+    const ext = (name.split('.').pop() || '').toLowerCase();
+    if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
+    if (ext === 'webm') return 'video/webm';
+    if (ext === 'mov') return 'video/quicktime';
+    if (ext === 'mkv') return 'video/x-matroska';
+    return 'application/octet-stream';
+  }
+
+  // pour libérer la mémoire des blobs
+  let lastObjectURL = null;
+  
+  let iAmEmitter = false; // true quand on a envoyé un média
+
+  function attachSyncSender(el) {
+    ['play', 'pause'].forEach(ev => {
+	  el.addEventListener(ev, () => {
+	    if (!iAmEmitter) return;
+	    sendApp({ type: 'sync', action: ev, time: el.currentTime });
+	  });
+    });
+
+    let seekDebounce = null;
+    el.addEventListener('seeking', () => { el.__userSeeking = true; });
+    el.addEventListener('seeked', () => {
+	  if (!iAmEmitter || !el.__userSeeking) return;
+	  el.__userSeeking = false;
+	  clearTimeout(seekDebounce);
+	  seekDebounce = setTimeout(() => {
+	    sendApp({ type: 'sync', action: 'seek', time: el.currentTime });
+	    // relance la lecture si elle était active avant le seek
+	    if (!el.paused) el.play().catch(() => {});
+	  }, 150);
+    });
+
+    /*// sécurité "waiting" — relance si bloqué plus de 800ms
+    el.addEventListener('waiting', () => {
+	  if (!iAmEmitter) return;
+	  clearTimeout(el.__waitingTimeout);
+	  el.__waitingTimeout = setTimeout(() => {
+	    if (!el.paused && el.readyState < 3) { // HAVE_FUTURE_DATA
+		  el.play().catch(() => {});
+	    }
+	  }, 800);
+    });*/
+  }
+
+  // onglets
+  const tabCtrl = document.getElementById('tabCtrl');
+  const tabRecv = document.getElementById('tabRecv');
+  const emitterCard = document.getElementById('emitter');
+  document.addEventListener('dragover', e => e.preventDefault());
+  document.addEventListener('drop',     e => e.preventDefault());
+  emitterCard.addEventListener('dragover', e => {
+    e.preventDefault();
+    emitterCard.classList.add('drag-over');
+  });
+  emitterCard.addEventListener('dragleave', e => {
+    if (!emitterCard.contains(e.relatedTarget))
+      emitterCard.classList.remove('drag-over');
+  });
+  emitterCard.addEventListener('drop', e => {
+    e.preventDefault();
+    e.stopPropagation(); // empêche la remontée vers le handler global
+    emitterCard.classList.remove('drag-over');
+
+    const file = e.dataTransfer.files?.[0];
+    if (!file) return;
+
+    // Injecter le fichier dans l'input sans envoyer
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    mediaFile.files = dt.files;
+    ctrlError.textContent = '';
+  });
+
+  const receiverCard = document.getElementById('receiver');
+  tabCtrl.onclick = ()=>{ emitterCard.classList.remove('hidden'); receiverCard.classList.add('hidden'); };
+  tabRecv.onclick = ()=>{ receiverCard.classList.remove('hidden'); emitterCard.classList.add('hidden'); };
+
+  // Panneau local
+    tabCtrl.onclick = ()=>{ 
+    emitterCard.classList.remove('hidden'); 
+    receiverCard.classList.add('hidden'); 
+  };
+  tabRecv.onclick = ()=>{ 
+    receiverCard.classList.remove('hidden'); 
+    emitterCard.classList.add('hidden'); 
+  };
+  const localPanel  = document.getElementById('localPanel');
+  const localAudio  = document.getElementById('localAudio');
+  const localVideo  = document.getElementById('localVideo');
+  attachSyncSender(localAudio);
+  attachSyncSender(localVideo);
+  const localImage  = document.getElementById('localImage');
+  const localErr    = document.getElementById('localErr');
+  const localClose  = document.getElementById('localClose');
+  const localPlaceholder = document.getElementById('localPlaceholder');
+  let lastLocalURL = null; // Mémoire d’URL locale pour libérer quand on ferme/remplace
+  let localStream = null; // Mémoire du flux écran
+
+  function localStopAll(){
+	if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+	try { localVideo.srcObject = null; } catch {} // Couper capture d'écran
+	localVideo.muted = false;
+	
+    // Arrêter et détacher AVANT de révoquer
+    try{ localAudio.pause(); localAudio.currentTime = 0; }catch{}
+    try{ localVideo.pause(); localVideo.currentTime = 0; }catch{}
+
+    // Vider les sources et forcer un cycle 'load()' pour couper net les fetchs en cours
+    try { localAudio.removeAttribute('src'); localAudio.load(); } catch {}
+    try { localVideo.removeAttribute('src'); localVideo.load(); } catch {}
+    try { localImage.removeAttribute('src'); } catch {}
+    localAudio.classList.add('hidden');
+    localVideo.classList.add('hidden');
+    localImage.style.display = 'none';
+
+    // Révoquer l'URL blob APRÈS avoir détaché les src (petit délai = 1 frame)
+    if (lastLocalURL) {
+      const toRevoke = lastLocalURL;
+      lastLocalURL = null;
+      setTimeout(()=>{ try{ URL.revokeObjectURL(toRevoke); }catch{} }, 50);
+    }
+
+    localErr.textContent = '';
+    localPlaceholder.classList.remove('hidden');
+  }
+
+  function showLocalPanel(){ localPanel.classList.remove('hidden'); }
+
+function showLocalAudio(url){
+  localStopAll();
+  lastLocalURL = url; // ← ré-enregistrer APRÈS localStopAll (qui vient de mettre null)
+  localPlaceholder.classList.add('hidden');
+  localAudio.src = url; localAudio.classList.remove('hidden');
+  showLocalPanel();
+  localAudio.play().catch(e=>localErr.textContent = e.message || 'Lecture audio impossible.');
+}
+
+function showLocalVideo(url){
+  localStopAll();
+  lastLocalURL = url; // ← idem
+  localPlaceholder.classList.add('hidden');
+  localVideo.src = url; localVideo.classList.remove('hidden');
+  showLocalPanel();
+  localVideo.play().catch(e=>localErr.textContent = e.message || 'Lecture vidéo impossible.');
+}
+
+function showLocalImage(url){
+  localStopAll();
+  lastLocalURL = url; // ← idem (pour la cohérence)
+  localPlaceholder.classList.add('hidden');
+  localImage.src = url; localImage.style.display = 'block';
+  showLocalPanel();
+}
+
+  localClose.onclick = ()=>{
+    localStopAll();
+    localPanel.classList.add('hidden'); // on cache juste le sous-panneau
+  };
+
+  // IP publique
+  fetch('https://api.ipify.org?format=json')
+    .then(r=>r.json()).then(d=>{
+      userIP = d.ip;
+	  window.userIP = userIP;
+	  chatSend.disabled = false;
+	  sendAnnounce(); // ré-annonce avec l'IP maintenant connue
+    }).catch(()=>{
+      userNick='User-'+Math.random().toString(36).slice(2,7);
+      // si tu veux forcer l’IP pour envoyer, laisse désactivé en cas d’échec.
+      // Sinon, réactive malgré tout :
+      // chatSend.disabled = false;
+    });
+
+  /* === WebSocket === */
+  let wsGen = 0;
+  function createSocket(url = resolveSignalUrl()){
+    try {
+      socket = new WebSocket(url);
+      socket.binaryType = 'arraybuffer';
+    } catch (e) {
+      // Empêche le crash global en cas d’URL invalide
+      addConsole('[WS] URL invalide: ' + e.message);
+      setWsStatus('Erreur URL');
+      return;
+    }
+    const thisSocket = socket;
+    const myGen = ++wsGen;
+
+    socket.onopen = ()=>{
+      if (wsGen !== myGen) return;
+      setWsStatus('Connecté');
+      ctrlError.textContent = ''; recvError.textContent = '';
+      socket.send(JSON.stringify({ type: 'join', room }));
+	  setTimeout(sendAnnounce, 500);
+    };
+
+    socket.onerror = ()=>{
+      if (wsGen !== myGen) return;
+      setWsStatus('Erreur');
+      ctrlError.textContent = 'Erreur de connexion.';
+    };
+
+    socket.onclose = (e)=>{
+      if (wsGen !== myGen) return;
+      setWsStatus('Déconnecté');
+      ctrlError.textContent = `Connexion fermée (code ${e.code}). Reconnexion dans 3 s...`;
+      // Ne relance pas une nouvelle socket si on a fermé volontairement pour "reconnect"
+      const voluntary = (e.code === 1000 && e.reason === 'reconnect');
+      if (!voluntary) {
+        // Et ne relance que si c'est toujours la socket active
+        setTimeout(()=>{ if (socket === thisSocket) createSocket(); }, 3000);
+      }
+    };
+
+    socket.onmessage = (event)=>{
+      if (wsGen !== myGen) return;
+	  
+      try{
+        if(typeof event.data === 'string'){
+          const msg = JSON.parse(event.data);
+		  
+		  if (msg.type === 'sync') {
+		    if (ignoreMedia) return;
+		    const el = !videoPlayer.classList.contains('hidden') ? videoPlayer
+				   : !audioPlayer.classList.contains('hidden') ? audioPlayer
+		   		   : null;
+		    if (!el) return;
+		    if (msg.action === 'seek' && typeof msg.time === 'number') {
+			  const doSeek = () => { el.currentTime = msg.time; };
+			  if (el.readyState >= 1) { // HAVE_METADATA
+				doSeek();
+			  } else {
+				el.addEventListener('loadedmetadata', doSeek, { once: true });
+			  }
+			}
+			else if (msg.action === 'play')  el.play().catch(() => {});
+			else if (msg.action === 'pause') el.pause();
+		    return;
+		  }
+
+          // AJOUT pour confirmer même si récepteur désactivé
+          if (ignoreMedia && (
+            msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' ||
+            msg.type === 'file'  || msg.type === 'binary-meta'
+          )) {
+            sendConfirmation(`${userIP} a reçu ${msg.type} (WS) mais Récepteur désactivé (non lu)`);
+            // si c'est un binaire annoncé, on annule d'emblée la construction
+            if (msg.type === 'binary-meta') { dropCurrentBlob = true; }
+            return;
+          }
+
+          // ==== SIGNALISATION WebRTC ====
+          // attribution d'id par le serveur
+          if (msg.type === 'hello') { myId = msg.peerId; addConsole(`[WS] hello → myId=${myId}`); return; }
+
+          // pairs déjà présents dans la room -> on appelle le premier
+          if (msg.type === 'peers') {
+            addConsole(`[WS] peers: ${msg.peers?.length||0}`);
+            if (msg.peers && msg.peers.length) {
+              peerId = msg.peers[0];
+			  // Initialise la map avec les IDs connus (IP/nick viendront par announce)
+			  msg.peers.forEach(id => { if (!peersMap.has(id)) peersMap.set(id, { ip: id, nick: '' }); });
+			  updatePeersDisplay();
+			  // On s'annonce aux pairs déjà présents
+			  sendAnnounce();
+
+              // Seul le plus grand id initie l'appel (règle simple anti-glare)
+              if (myId && peerId && myId > peerId) {
+                if (uploadInProgress) {
+                  addConsole('[RTC] pair available but upload ongoing - waiting')
+                } else {
+                  addConsole(`[WS] calling peerId=${peerId}`);
+                  startRtcAsCaller();
+                }
+              }
+            }
+            return;
+          }
+
+          // offre reçue -> on devient "callee"
+          if (msg.type === 'offer' && msg.sdp) {
+            peerId = msg.from || peerId;
+            const _pc = ensurePeerConnection(peerId);
+            if (!_pc) { addConsole('[RTC] Indispo, on reste en WS'); return; }
+
+            // Si on avait déjà une remote, on redémarre clean
+            if (_pc.signalingState !== 'stable') {
+              try { _pc.close(); } catch {}
+              pc = null; dc = null;
+            }
+            const pc2 = ensurePeerConnection(peerId);
+            pc2.setRemoteDescription({ type:'offer', sdp: msg.sdp })
+              .then(()=> pc2.createAnswer())
+              .then(answer => pc2.setLocalDescription(answer).then(()=>{
+                socket.send(JSON.stringify({ type:'answer', to: peerId, sdp: answer.sdp }));
+              }))
+              .catch(err => addConsole('[RTC] Erreur answer: '+err.message));
+            return;
+          }
+
+          // answer reçue (quand on est caller)
+          if (msg.type === 'answer' && msg.sdp) {
+            if (pc && msg.from === peerId) {
+              // Évite l'erreur "Called in wrong state: stable"
+              if (pc.signalingState !== 'stable') {
+                pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp })
+                  .catch(err => addConsole('[RTC] Erreur setRemoteDescription(answer): '+err.message));
+              } else {
+                addConsole('[RTC] Ignoré: answer reçue alors que l’état est déjà stable');
+              }
+            }
+            return;
+          }
+
+          // candidats ICE
+          if (msg.type === 'ice' && msg.candidate) {
+            if (pc) {
+              pc.addIceCandidate(msg.candidate).catch(()=>{});
+            }
+            return;
+          }
+          // ==== FIN SIGNALISATION ====
+
+          // ping / pong / confirmation -> console unifiée
+          if (msg.type === 'ping') {
+            // Ne répond qu'aux pings venant d’AUTRES
+            if (msg.from && msg.from !== myId) {
+              socket.send(JSON.stringify({ type:'pong', id: msg.id, to: msg.from, from: myId, ip: userIP }));
+            }
+            return;
+          }
+
+          if (msg.type === 'pong') {
+            // N’afficher que les PONGs qui me sont destinés
+            if (msg.to === myId) {
+              addConsole(`PONG reçu de ${msg.ip || '?'} (id=${msg.id})`);
+            }
+            return;
+          }
+          if(msg.type === 'confirmation'){
+            addConsole(msg.text);
+            return;
+          }
+		  
+		  if (msg.type === 'presence') {
+		    const who = msg.ip || msg.peerId || 'inconnu';
+		    const label = msg.nick ? `${who} (${msg.nick})` : who;
+		    if (msg.action === 'join') {
+			  addConsole(`[WS] presence: join ${label}`);
+			  appendChat({ from: '[système]', text: `Connexion de ${label}` }, false);
+			  if (msg.peerId) peersMap?.set(msg.peerId, { ip: who, nick: msg.nick || '' });
+			  updatePeersDisplay?.();
+			  sendAnnounce?.();
+			  // Initie RTC si on a le plus grand id et pas encore de connexion
+			  if (msg.peerId && myId && myId > msg.peerId && !pc) {
+			    peerId = msg.peerId;
+			    addConsole(`[RTC] presence join → on initie (${myId} > ${msg.peerId})`);
+			    if (!uploadInProgress) startRtcAsCaller();
+			  }
+		    } else if (msg.action === 'leave') {
+			  addConsole(`[WS] presence: leave ${label}`);
+			  appendChat({ from: '[système]', text: `Déconnexion de ${label}` }, false);
+			  if (msg.peerId) peersMap?.delete(msg.peerId);
+			  updatePeersDisplay?.();
+			  // nettoyage de la connexion RTC si c'était notre pair actif
+			  if (msg.peerId === peerId) {
+				addConsole('[RTC] Nettoyage de connexion après départ de pair.');
+				try { pc?.close(); } catch {}
+				pc = null; dc = null; peerId = null;
+				setRtcStatus('Déconnecté');
+			  }
+			  return;
+			}
+		    return;
+	  	  }
+		  
+		  if (msg.type === 'announce') {
+			if (msg.from && msg.from !== myId) {
+			  peersMap.set(msg.from, { ip: msg.ip || msg.from, nick: msg.nick || '' });
+			  updatePeersDisplay();
+			}
+			return;
+		  }
+
+          // TCHAT
+          // --- Dé-duplication chat (au cas où le serveur relayerait 2x) ---
+          const __seenChat = (socket.__seenChat ||= new Set());
+          if (msg.type === 'chat') {
+            const key = `${msg.from}|${msg.fromName||''}|${msg.text||''}`;
+            if (__seenChat.has(key)) return;
+            __seenChat.add(key);
+            setTimeout(()=>__seenChat.delete(key), 2000); // fenêtre 2s
+          }
+
+          if (msg.type === 'chat') {
+            // évite le doublon local
+            if (msg.from === myId) return;
+            const name = msg.fromName || msg.from;
+            appendChat({ from: name, text: msg.text || '' }, false);
+            return;
+          }
+
+          // Si désactivé, ignorer tout ce qui est média
+          if(ignoreMedia){
+            if(msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' || msg.type === 'file' ||
+               msg.type === 'audioBlob' || msg.type === 'videoBlob' || msg.type === 'imageBlob' || msg.type === 'fileBlob'){
+              return;
+            }
+          }
+
+          // annonces de blobs
+          if(msg.type === 'audioBlob' || msg.type === 'videoBlob' || msg.type === 'imageBlob' || msg.type === 'fileBlob'){
+            receivedChunks = [];
+            currentMime = msg.mime || '';
+            currentFilename = msg.filename || '';
+            currentKind = (msg.type||'').replace('Blob',''); // 'audio' | 'video' | 'image' | 'file'
+            dropCurrentBlob = false;
+            return;
+          }
+
+          // messages classiques URL
+          if(msg.type === 'audio'){
+            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
+            showAudio(msg.url);
+            sendConfirmation(`${userIP} a reçu l'audio (URL via WS)`);
+            return;
+          }
+          if(msg.type === 'video'){
+            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
+            showVideo(msg.url);
+            sendConfirmation(`${userIP} a reçu la vidéo (URL via WS)`);
+            return;
+          }
+          if(msg.type === 'image'){
+            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
+            showImage(msg.url);
+            sendConfirmation(`${userIP} a reçu l'image (URL via WS)`);
+            return;
+          }
+          if(msg.type === 'stop'){
+            stopAll();
+            receivedChunks = [];
+            currentMime = ''; currentKind = ''; currentFilename='';
+            dropCurrentBlob = true;
+            ctrlError.textContent = ''; recvError.textContent = '';
+            sendConfirmation(`${userIP} a reçu le stop`);
+            return;
+          }
+          // --- annonce générique (nouveau format) ---
+          if (msg.type === 'binary-meta') {
+            receivedChunks = [];
+            currentMime = msg.mime || '';
+            currentFilename = msg.filename || '';
+            currentKind = (msg.kind || 'file'); // 'audio' | 'video' | 'image' | 'file'
+            dropCurrentBlob = false;
+            return;
+          }
+
+          if (msg.type === 'binary-cancel') {
+            // on jette le blob en construction
+            receivedChunks = [];
+            currentMime = ''; currentKind = ''; currentFilename='';
+            dropCurrentBlob = true;
+            sendConfirmation(`${userIP} a annulé l'envoi`);
+            return;
+          }
+
+          // --- fin générique (nouveau format) + ancien nom endBlob ---
+          if (msg.type === 'binary-end' || msg.type === 'endBlob') {
+            if (!dropCurrentBlob && receivedChunks.length) {
+              const blob = new Blob(receivedChunks, { type: currentMime || 'application/octet-stream' });
+              const url = URL.createObjectURL(blob);
+              if (lastObjectURL) { try { URL.revokeObjectURL(lastObjectURL); } catch{} }
+              lastObjectURL = url;
+
+              // === DECISION / FALLBACK (WS) ===
+              const fname = currentFilename || 'fichier';
+              const save = () => downloadUrl(url, fname);
+              if (currentKind === 'file') {
+                save();
+                addConsole(`Fichier téléchargé: ${currentFilename||'fichier'}`);
+                sendConfirmation(`Fichier reçu par ${userIP}: ${currentFilename||'fichier'}`);
+              } else if (currentMime) {
+                if (currentMime.startsWith('video') && !videoPlayer.canPlayType(currentMime)) {
+                  addConsole(`Vidéo non supportée (${currentMime}), téléchargement.`);
+                  sendConfirmation(`Blob (${currentMime}) reçu par ${userIP} (vidéo non supportée)`);
+                  save();
+                } else {
+                  routeMediaByMime(url, currentMime);
+                  sendConfirmation(`Blob (${currentMime}) reçu par ${userIP}`);
+                }
+              } else if (currentKind) {
+                routeMediaByKind(url, currentKind);
+                sendConfirmation(`Blob (${currentKind}) reçu par ${userIP}`);
+              } else {
+                save(); // Aucun méta reçu : on télécharge par défaut
+              }
+            }
+            // reset
+            receivedChunks = [];
+            currentMime = ''; currentKind = ''; currentFilename='';
+            dropCurrentBlob = false;
+            return;
+          }
+
+        }else{ // Binaire
+          if(ignoreMedia){ return; }
+          const t = event.data?.constructor?.name;
+          if(t === 'Blob' || t === 'ArrayBuffer'){ receivedChunks.push(event.data); }
+        }
+      }catch(err){
+        recvError.textContent = `Erreur message : ${err.message}`;
+        console.error(err);
+      }
+    };
+  }
+  // Auto connexion au chargement de la page
+  window.addEventListener('DOMContentLoaded', () => {
+    connectFromModal();
+  });
+
+
+  /* === Emetteur : envois === */
+  const btnSendAudioUrl = document.getElementById('btnSendAudioUrl');
+  const btnSendVideoUrl = document.getElementById('btnSendVideoUrl');
+  const btnSendImageUrl = document.getElementById('btnSendImageUrl');
+  const btnSendMediaFile = document.getElementById('btnSendMediaFile');
+  const btnStop = document.getElementById('btnStop');
+  const btnPing = document.getElementById('btnPing');
+  const audioUrl = document.getElementById('audioUrl');
+  const videoUrl = document.getElementById('videoUrl');
+  const imageUrl = document.getElementById('imageUrl');
+  const mediaFile = document.getElementById('mediaFile');
+  const progressBar = document.getElementById('uploadProgress');
+  const progressText = document.getElementById('progressText');
+
+  let uploadInProgress = false, abortUpload = false;
+
+  // --- Transport d'upload verrouillé pour l'envoi en cours ---
+  let uploadTransport = null; // 'rtc' | 'ws' | null
+
+  function beginUploadFor(file, kind) {
+    // Choix UNE FOIS pour tout l'envoi
+    uploadTransport = (typeof rtcReady === 'function' && rtcReady()) ? 'rtc' : 'ws';
+
+    // Métadonnées en JSON via WS (même si les chunks iront en RTC)
+    sendMetaOverActiveTransport({
+      filename: file.name || 'fichier',
+      size: file.size || 0,
+      mime: file.type || guessMimeByExt(file.name) || 'application/octet-stream',
+      kind: kind || 'file',
+      fileId: crypto.randomUUID()
+    });
+  }
+
+  function sendMetaOverActiveTransport(meta){
+    const payload = JSON.stringify({ type:'binary-meta', ...meta });
+    if (uploadTransport === 'rtc' && dc && dc.readyState === 'open') {
+      dc.send(payload);
+    } else {
+      sendJSON({ type:'binary-meta', ...meta });
+    }
+  }
+
+  async function sendChunk(data) {
+    // Toujours envoyer un ArrayBuffer (même si data est un Blob)
+    const buf =
+      data instanceof Blob ? await data.arrayBuffer() :
+      data instanceof ArrayBuffer ? data :
+      (ArrayBuffer.isView(data) ? data.buffer : null);
+
+    if (!buf) throw new Error('Type chunk inattendu');
+
+    if (uploadTransport === 'rtc') {
+      dc?.send(buf);               // DataChannel
+    } else {
+      socket?.send(buf);           // WebSocket
+    }
+  }
+
+  function setWsStatus(text) {
+    wsStatus.textContent = text;
+    if (text === 'Connecté') { wsStatus.classList.add('ok'); wsStatus.classList.remove('ko'); }
+    else { wsStatus.classList.remove('ok'); wsStatus.classList.add('ko'); }
+  }
+
+  function wsReady(){ 
+    let isReady = socket && socket.readyState;
+    if (isReady === 1) {
+      setWsStatus("Connecté");
+    } else {
+      setWsStatus("Déconnecté");
+    }
+    return isReady; 
+  }
+
+  function sendJSON(obj){
+    if(!wsReady()){ ctrlError.textContent='Non connecté.'; return false; }
+    socket.send(JSON.stringify(obj)); return true;
+  }
+
+  btnSendAudioUrl.onclick = () => {
+    const url = audioUrl.value.trim();
+    if (!url) return;
+    iAmEmitter = true;
+    if (sendApp({ type:'audio', url })) { ctrlError.textContent=''; showLocalAudio(url); }
+  };
+
+  btnSendVideoUrl.onclick = () => {
+    const url = videoUrl.value.trim();
+    if (!url) return;
+    iAmEmitter = true;
+    if (sendApp({ type:'video', url })) { ctrlError.textContent=''; showLocalVideo(url); }
+  };
+
+  btnSendImageUrl.onclick = () => {
+    const url = imageUrl.value.trim();
+    if (!url) return;
+    iAmEmitter = true;
+    if (sendApp({ type:'image', url })) { ctrlError.textContent=''; showLocalImage(url); }
+  };
+  
+  const btnShareScreen = document.getElementById('btnShareScreen');
+
+  btnShareScreen.onclick = async () => {
+  if (!rtcReady()) {
+    ctrlError.textContent = 'RTC non connecté — le partage d\'écran nécessite une connexion P2P active avec un pair.';
+    return;
+  }
+  try {
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    
+    // 3. Affichage local (retour vidéo)
+    localPlaceholder.classList.add('hidden');
+    localVideo.srcObject = localStream;
+    localVideo.classList.remove('hidden');
+	localVideo.muted = true; // anti Larsen
+    showLocalPanel();
+    localVideo.play().catch(()=>{});
+
+    // 4. Connecter la vidéo au WebRTC existant
+    if (!pc && peerId) ensurePeerConnection(peerId);
+
+    if (pc) {
+      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
+      
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
+    }
+
+    // 5. Si on arrête le partage via le bouton natif de Chrome/Firefox
+    localStream.getVideoTracks()[0].onended = () => btnStop.click();
+
+  } catch (err) {
+    ctrlError.textContent = "Erreur de capture : " + err.message;
+  }
+  };
+
+  btnStop.onclick = ()=>{
+    iAmEmitter = false;
+    localStopAll();
+    if(sendJSON({type:'stop'})){ ctrlError.textContent=''; if(uploadInProgress) abortUpload = true; }
+  };
+
+  btnPing.onclick = ()=>{
+    if(!wsReady()){ ctrlError.textContent='Non connecté.'; return; }
+    const id = 'mecno' + Math.random().toString(16).slice(2);
+    socket.send(JSON.stringify({ type:'ping', id, from: myId }));
+    addConsole(`PING envoyé (id=${id})`);
+  };
+
+  btnSendMediaFile.onclick = () => {
+    if (uploadInProgress) { ctrlError.textContent = 'Un envoi est déjà en cours.'; return; }
+    const file = mediaFile.files?.[0];
+    if (!file) { ctrlError.textContent = 'Aucun fichier.'; return; }
+    if (!wsReady()) { ctrlError.textContent = 'Non connecté.'; return; }
+
+    btnSendMediaFile.disabled = true;
+    mediaFile.disabled = true;
+
+    const kind = file.type?.startsWith('video') ? 'video'
+               : file.type?.startsWith('audio') ? 'audio'
+               : file.type?.startsWith('image') ? 'image' : 'file';
+
+    const sendFn = sendBlob(file, kind);
+    
+    sendFn.finally(() => {
+        btnSendMediaFile.disabled = false;
+        mediaFile.disabled = false;
+    });
+  };
+  
+  async function sendMediaViaStream(file, kind) {
+    iAmEmitter = true;
+    
+    // 1. Lecture locale normale — le lecteur contrôle le fichier seul, sans concurrence
+    const url = URL.createObjectURL(file);
+    if (lastLocalURL) { try { URL.revokeObjectURL(lastLocalURL); } catch {} }
+    lastLocalURL = url;
+    
+    const el = kind === 'video' ? localVideo : localAudio;
+    if (kind === 'video') showLocalVideo(url);
+    else                  showLocalAudio(url);
+    
+    // Attendre que les métadonnées soient chargées avant de capturer
+    if (el.readyState < 1) {
+        await new Promise(resolve => el.addEventListener('loadedmetadata', resolve, { once: true }));
+    }
+    
+    // 2. Capture du flux et envoi via WebRTC
+    if (!pc && peerId) ensurePeerConnection(peerId);
+    
+    if (pc) {
+        const stream = el.captureStream();
+        
+        // Supprimer les anciens tracks média pour éviter les doublons
+        pc.getSenders()
+            .filter(s => s.track && (s.track.kind === 'video' || s.track.kind === 'audio'))
+            .forEach(s => pc.removeTrack(s));
+        
+        stream.getTracks().forEach(track => pc.addTrack(track, stream));
+        
+        // Renégocier l'offre
+        try {
+            const offer = await pc.createOffer();
+            await pc.setLocalDescription(offer);
+            socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
+            addConsole(`[RTC] Stream ${kind} envoyé via captureStream`);
+        } catch (err) {
+            addConsole('[RTC] Erreur renegociation: ' + err.message);
+        }
+    } else {
+        // Pas de connexion RTC : fallback WS avec les chunks (dégradé, seek limité)
+        addConsole('[WS] Pas de RTC, envoi par chunks (seek limité sur grands fichiers)');
+        await sendBlob(file, kind);
+    }
+  }
+
+  async function sendBlob(file, kind) {
+    if (uploadInProgress) throw new Error('Upload déjà en cours');
+	iAmEmitter = true;
+    // Annonce + verrou du transport
+    beginUploadFor(file, kind);
+
+    try{ // On active le fichier pour nous-mêmes avant de débuter son envoi (pour écouter en même temps, par ex.)
+      if (kind === 'audio' || kind === 'video' || kind === 'image') {
+        const nextUrl = URL.createObjectURL(file);
+        // showLocal* gère maintenant lastLocalURL proprement
+        if (kind === 'audio')      showLocalAudio(nextUrl);
+        else if (kind === 'video') showLocalVideo(nextUrl);
+        else                       showLocalImage(nextUrl);
+      }
+    }catch{}
+
+    const CHUNK = 64 * 1024; // 64 Ko (fiable et efficace)
+    let offset = 0;
+    const t0 = Date.now();
+
+    progressBar.style.display = 'inline-block';
+    uploadInProgress = true; 
+    abortUpload = false;
+
+    // Backpressure: seuil bas si RTC
+    if (dc) { try { dc.bufferedAmountLowThreshold = 8 * CHUNK; } catch {} }
+
+    const waitForDrainRTC = () => new Promise((resolve) => {
+      if (!dc || dc.bufferedAmount <= dc.bufferedAmountLowThreshold) return resolve();
+      const onLow = ()=>{ dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
+      dc.addEventListener('bufferedamountlow', onLow, { once:true });
+    });
+
+    try {
+      while (!abortUpload && offset < file.size) {
+	    if (uploadTransport === 'rtc' && dc && dc.bufferedAmount > dc.bufferedAmountLowThreshold) {
+		  await waitForDrainRTC();
+	      if (abortUpload) break;
+	    }
+	    if (uploadTransport === 'ws') await waitForWsDrain();
+
+	    const end = Math.min(offset + CHUNK, file.size);
+	    const slice = file.slice(offset, end);
+	    await sendChunk(slice);
+	    offset = end;
+
+	    // Yield event loop tous les 16 chunks (~1 Mo) pour ne pas affamer le player local
+	    if ((offset / CHUNK) % 16 === 0) await new Promise(r => setTimeout(r, 0));
+
+	    const ratio = Math.round(100 * offset / file.size);
+	    progressText.textContent = `${ratio}%`;
+	    progressBar.value = ratio;
+	  }
+
+      if (!abortUpload && uploadTransport === 'rtc') {
+        await waitForDrainRTC();
+      }
+
+      // NE FINALISE QUE SI TOUT A ÉTÉ ENVOYÉ
+      if (!abortUpload && offset === file.size) {
+        sendApp({ type: 'binary-end' });
+        const dt = (Date.now() - t0) / 1000;
+        addConsole(`Envoi terminé (${file.name}) en ${dt.toFixed(1)}s`);
+      } else {
+        addConsole(`Envoi annulé (${file.name})`);
+        // Optionnel : notifier explicitement l’annulation
+        sendApp({ type:'binary-cancel' });
+      }
+    } catch (e) {
+      addConsole(`Erreur d'envoi: ${e.message}`);
+    } finally {
+      resetUploadUI();
+      uploadTransport = null;
+    }
+  }
+
+  function resetUploadUI(){
+    progressBar.style.display='none'; progressBar.value=0; progressText.textContent='';
+    uploadInProgress = false; abortUpload = false;
+  }
+
+  /* === Console unifiée === */
+  function addConsole(text){
+    const ts = new Date().toLocaleTimeString();
+    consoleLog.textContent += `[${ts}] ${text}\n`;
+    consoleLog.scrollTop = consoleLog.scrollHeight;
+  }
+
+  function sendConfirmation(text){
+    if(socket?.readyState === 1){
+      socket.send(JSON.stringify({type:'confirmation', text}));
+      addConsole(text);
+    }
+  }
+
+  /* === Tchat === */
+  function appendChat(msg, isLocal){
+    const line = document.createElement('div');
+    const ts = new Date(msg.ts || Date.now()).toLocaleTimeString();
+    const who = (isLocal ? '(moi)' : (msg.from || 'anonyme'));
+    line.textContent = `[${ts}] ${who}: ${msg.text || ''}`;
+    chatLog.appendChild(line);
+    chatLog.scrollTop = chatLog.scrollHeight;
+  }
+  function sendChat(){
+    const text = chatInput.value.trim();
+    if (!text || !wsReady()) return;
+    appendChat({ from: '(moi)', text }, true);
+    const payload = { type:'chat', text, from: myId };
+    payload.fromName = getDisplayName();
+    socket.send(JSON.stringify(payload));
+    chatInput.value = '';
+  }
+
+  chatSend.onclick = sendChat;
+  chatInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') sendChat(); });
+
+  /* === Récepteur : actions === */
+  document.getElementById('btnActivate').onclick = activate;
+  document.getElementById('btnDeactivate').onclick = deactivate;
+
+  function activate(){
+    isActivated = true;
+    ignoreMedia = false; // on redevient réceptif
+    activationStatus.textContent = 'Activé';
+    activationStatus.classList.remove('ko'); activationStatus.classList.add('ok');
+  }
+
+  function deactivate(){
+    isActivated = false;
+    ignoreMedia = true; // on droppe tout ce qui arrive tant que désactivé
+    activationStatus.textContent = 'Désactivé';
+    activationStatus.classList.remove('ok'); activationStatus.classList.add('ko');
+    stopAll();
+  }
+
+  function stopAll(){
+    try{ audioPlayer.pause(); audioPlayer.currentTime = 0; }catch{}
+    try{ videoPlayer.pause(); videoPlayer.currentTime = 0; }catch{}
+    audioPlayer.removeAttribute('src');
+    videoPlayer.removeAttribute('src');
+	try { videoPlayer.srcObject = null; } catch {}
+    audioPlayer.load();
+    videoPlayer.load();
+    audioPlayer.classList.add('hidden');
+    videoPlayer.classList.add('hidden');
+    hide(imageViewer);
+    if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
+  }
+
+  function showAudio(url){
+    if (ignoreMedia) return;
+    hide(imageViewer);
+    videoPlayer.classList.add('hidden');
+    audioPlayer.src = url;
+    audioPlayer.classList.remove('hidden');
+    if(isActivated) audioPlayer.play().catch(e=>recvError.textContent=e.message);
+  }
+
+  function showVideo(url, mimeOpt, filenameOpt) {
+    if (ignoreMedia) return;
+    const mime = mimeOpt || currentMime || '';
+    const fname = filenameOpt || currentFilename || 'video.mp4';
+
+    // En dehors d'Electron, refuser les formats inconnus de canPlayType
+    if (mime && !isElectron() && videoPlayer.canPlayType(mime) === '') {
+      addConsole(`Vidéo non supportée (${mime}), téléchargement.`);
+      return downloadUrl(url, fname);
+    }
+
+    hide(imageViewer);
+    audioPlayer.classList.add('hidden');
+    videoPlayer.src = url;
+    videoPlayer.classList.remove('hidden');
+
+    // Fallback téléchargement si le player ne peut vraiment pas lire
+    videoPlayer.onerror = () => {
+      addConsole(`Lecture impossible (${mime || 'inconnu'}), téléchargement.`);
+      downloadUrl(url, fname);
+      videoPlayer.onerror = null;
+    };
+
+    if (isActivated) videoPlayer.play().catch(e => {
+      recvError.textContent = e.message;
+      downloadUrl(url, fname);
+    });
+  }
+
+  function showImage(url){
+    if (ignoreMedia) return;
+    audioPlayer.classList.add('hidden');
+    videoPlayer.classList.add('hidden');
+    imageViewer.src = url;
+    imageViewer.style.display = 'block';
+  }
+
+  function downloadUrl(url, filename = 'fichier') {
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+
+  function routeMediaByMime(url, mime){
+    if (mime?.startsWith('video')) showVideo(url);
+    else if (mime?.startsWith('audio')) showAudio(url);
+    else if (mime?.startsWith('image')) showImage(url);
+    else downloadUrl(url, currentFilename || 'fichier');   // <-- au lieu de showImage
+  }
+
+  function routeMediaByKind(url, kind){
+    if (kind === 'video') showVideo(url);
+    else if (kind === 'audio') showAudio(url);
+    else if (kind === 'image') showImage(url);
+    else downloadUrl(url, currentFilename || 'fichier');   // <-- au lieu de showImage
+  }
+
+  function hide(el){ el.style.display='none'; }
+  
+  (function(){
+	  const btn = document.getElementById('settingsBtn');
+	  const modal = document.getElementById('settingsModal');
+	  const form = document.getElementById('settingsForm');
+	  const cancel = document.getElementById('settingsCancel');
+	  const ip = document.getElementById('serverIp');
+	  const nick = document.getElementById('nickname');
+
+	  function openModal(){
+		modal.setAttribute('aria-hidden','false');
+		ip.value = window.__signalIp || '';
+		nick.value = window.__nickname || '';
+		setTimeout(()=>ip && ip.focus(), 20);
+	  }
+	  function closeModal(){ modal.setAttribute('aria-hidden','true'); }
+
+	  btn.addEventListener('click', openModal);
+	  cancel.addEventListener('click', closeModal);
+	  modal.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
+	  window.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modal.getAttribute('aria-hidden')==='false') closeModal(); });
+
+	  form.addEventListener('submit', (e)=>{
+		e.preventDefault();
+      // Stockage en mémoire volatile pour la session uniquement
+      window.__signalIp = (ip.value || '').trim();
+      window.__nickname = (nick.value || '').trim();
+      connectFromModal();
+      closeModal();
+	  });
+	  
+	  // Contrôle serveur local (Electron uniquement)
+	  const localServerRow    = document.getElementById('localServerRow');
+	  const btnToggleServer   = document.getElementById('btnToggleServer');
+	  const localServerStatus = document.getElementById('localServerStatus');
+
+	  if (window.serverControl) {
+		localServerRow.style.display = '';
+
+		async function refreshServerState() {
+		  const { running } = await window.serverControl.status();
+		  btnToggleServer.textContent = running ? 'Arrêter le serveur local' : 'Lancer le serveur local';
+		  localServerStatus.textContent = running ? '● Actif sur :8080' : '○ Arrêté';
+		  localServerStatus.style.color = running ? 'var(--ok)' : '#7f849a';
+		}
+
+		btnToggleServer.addEventListener('click', async () => {
+		  btnToggleServer.disabled = true;
+		  const { running } = await window.serverControl.status();
+		  if (running) {
+			await window.serverControl.stop();
+			await refreshServerState();
+		  } else {
+			const res = await window.serverControl.start(); // attend que le port soit ouvert
+			if (!res.ok) {
+			  localServerStatus.textContent = '⚠ ' + (res.msg || 'Erreur');
+			  btnToggleServer.disabled = false;
+			  return;
+			}
+			await refreshServerState();
+			// Se connecte automatiquement si aucun serveur personnalisé n'est renseigné
+			if (!window.__signalIp) connectFromModal();
+		  }
+		  btnToggleServer.disabled = false;
+		});
+
+		// Rafraîchit l'état à chaque ouverture de la modale
+		const _origOpen = openModal;
+		openModal = () => { _origOpen(); refreshServerState(); };
+	  }
+  })();
+
+  function ensurePeerConnection(targetId){
+    if (pc) return pc;
+
+    if (!hasWebRTC()) {
+      setRtcStatus('Indisponible');
+      addConsole('[RTC] Non disponible, probablement en raison du contexte.');
+      return null;
+    }
+
+    setRtcStatus('Connexion...');
+    pc = new RTCPeerConnection({
+      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
+    });
+
+    pc.onicecandidate = (e)=>{
+      if (e.candidate && targetId) {
+        socket.send(JSON.stringify({ type: 'ice', to: targetId, candidate: e.candidate }));
+      }
+    };
+
+    pc.onconnectionstatechange = () => {
+	  const s = pc.connectionState;
+	  addConsole(`[RTC] PeerConnection: ${s}`);
+	  if (s === 'connected') setRtcStatus('Connecté');
+	  else if (s === 'connecting' || s === 'checking') setRtcStatus('Connexion...');
+	  else if (s === 'failed') {
+		setRtcStatus('Déconnecté');
+		addConsole('[RTC] Échec — restartIce...');
+		try { pc.restartIce(); } catch {}
+		// Recréation complète si restartIce ne suffit pas
+		setTimeout(() => {
+		  if (!rtcReady() && peerId) {
+			addConsole('[RTC] Recréation complète...');
+			try { pc?.close(); } catch {}
+			pc = null; dc = null;
+			startRtcAsCaller();
+		  }
+		}, 3000);
+	  }
+	  else if (s === 'disconnected' || s === 'closed') setRtcStatus('Déconnecté');
+	};
+
+    // Si on est "callee", on recevra le canal ici
+    pc.ondatachannel = (ev)=>{
+      dc = ev.channel;
+      setupDataChannel();
+    };
+	
+	// Réception d'un flux vidéo
+	pc.ontrack = (ev) => {
+		if (ignoreMedia) return;
+		
+		// On vérifie qu'on n'est pas déjà en train de lire CE flux exact
+		if (videoPlayer.srcObject !== ev.streams[0]) {
+		  hide(imageViewer);
+		  audioPlayer.classList.add('hidden');
+		  
+		  videoPlayer.srcObject = ev.streams[0];
+		  videoPlayer.classList.remove('hidden');
+		  
+		  if (isActivated) {
+			// On lance la lecture, et on ignore l'erreur d'interruption (AbortError) si elle survient
+			videoPlayer.play().catch(e => {
+			  if (e.name !== 'AbortError') recvError.textContent = e.message;
+			});
+		  }
+		  sendConfirmation(`${userIP} a reçu le flux écran en direct (RTC)`);
+		}
+    };
+    return pc;
+  }
+
+  function setupDataChannel(){
+    if (!dc) return;
+    try { dc.binaryType = 'arraybuffer'; } catch {}
+    dc.bufferedAmountLowThreshold = 512 * 1024;
+    dc.onopen = ()=> setRtcStatus('Connecté');
+    dc.onclose = () => {
+	  setRtcStatus('Déconnecté');
+	  if (peerId) setTimeout(() => {
+		if (!rtcReady()) {
+		  addConsole('[RTC] DataChannel fermé, tentative de reconnexion...');
+		  try { pc?.close(); } catch {}
+		  pc = null; dc = null;
+		  startRtcAsCaller();
+		}
+	  }, 2000);
+	};
+    dc.onmessage = (ev)=> handleRtcIncoming(ev.data);
+  }
+
+  function waitForDrain() {
+    return new Promise(resolve => {
+      if (!rtcReady() || dc.bufferedAmount <= dc.bufferedAmountLowThreshold) return resolve();
+      const h = () => { dc.removeEventListener('bufferedamountlow', h); resolve(); };
+      dc.addEventListener('bufferedamountlow', h, { once: true });
+    });
+  }
+
+  function waitForDrainRTC(timeoutMs = 2000) {
+    return new Promise(resolve => {
+      if (!rtcReady()) return resolve();
+      // si déjà sous le seuil: resolve immédiat
+      if (dc.bufferedAmount <= (dc.bufferedAmountLowThreshold || 0)) return resolve();
+
+      let settled = false;
+      const done = () => { if (!settled) { settled = true; resolve(); } };
+
+      const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); done(); };
+      dc.addEventListener('bufferedamountlow', onLow, { once: true });
+
+      // filet de sécurité si jamais l'event ne vient pas
+      setTimeout(done, timeoutMs);
+    });
+  }
+  
+  function waitForWsDrain() {
+    return new Promise(resolve => {
+      if (!socket || socket.bufferedAmount < 4 * 1024 * 1024) return resolve();
+      const check = () => {
+        if (!socket || socket.bufferedAmount < 512 * 1024) return resolve();
+        setTimeout(check, 50);
+      };
+      setTimeout(check, 50);
+    });
+  }
+
+  async function startRtcAsCaller(){
+    if (!ensurePeerConnection(peerId)) return;
+    // Canal principal pour fichiers/messages app
+    dc = pc.createDataChannel('file', { ordered: true });
+    if (dc) dc.binaryType = 'arraybuffer'; 
+    setupDataChannel();
+    try{
+      const offer = await pc.createOffer();
+      await pc.setLocalDescription(offer);
+      socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
+    }catch(err){
+      addConsole('[RTC] Erreur offer: '+err.message);
+    }
+  }
+
+  // Réception côté RTC (mêmes types que WS : binary-meta, endBlob, stop, chat, audio/video/image, etc.)
+  let rtcReceivedChunks = [];
+  let rtcMime = '', rtcKind = '', rtcFilename = '';
+
+  function handleRtcIncoming(data){
+    try{
+      if (typeof data === 'string') {
+        const msg = JSON.parse(data);
+		
+        // AJOUT pour confirmer côté RTC même si récepteur désactivé
+        if (ignoreMedia && (
+          msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' ||
+          msg.type === 'file'  || msg.type === 'binary-meta'
+        )) {
+          sendConfirmation(`${userIP} a reçu ${msg.type} (RTC) mais Récepteur désactivé (non lu)`);
+          if (msg.type === 'binary-meta') { dropCurrentBlob = true; rtcReceivedChunks = []; }
+          return;
+        }
+
+        if (msg.type === 'stop') {
+          rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
+          dropCurrentBlob = true; // réutilise ta logique
+          sendConfirmation(`Stop reçu (RTC) par ${userIP}`);
+          return;
+        }
+        if (msg.type === 'binary-meta') {
+          rtcMime = msg.mime || '';
+          rtcKind = msg.kind || '';
+          rtcFilename = msg.filename || 'fichier';
+          dropCurrentBlob = false;
+          rtcReceivedChunks = [];
+          addConsole(`[RTC] META: ${rtcFilename} (${rtcMime || 'mime inconnu'})`);
+          return;
+        }
+
+        if (msg.type === 'binary-cancel') {
+          // on jette le blob en construction
+          rtcReceivedChunks = [];
+          rtcMime = '';
+          rtcKind = '';
+          rtcFilename = '';
+          dropCurrentBlob = true;
+          sendConfirmation(`${userIP} a annulé l'envoi (RTC)`);
+          return;
+        }
+
+        if (msg.type === 'binary-end' || msg.type === 'endBlob') {
+          // rien à faire si on a demandé de jeter le flux ou s'il est vide
+          if (dropCurrentBlob || !rtcReceivedChunks.length) {
+            rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
+            return;
+          }
+
+          // MIME/Kind effectifs avec repli sur les valeurs WS si besoin
+          const effMime = rtcMime || currentMime || 'application/octet-stream';
+          const effKind = rtcKind || currentKind || (
+            effMime.startsWith('video') ? 'video'
+            : effMime.startsWith('audio') ? 'audio'
+            : effMime.startsWith('image') ? 'image'
+            : 'file'
+          );
+
+          // construire l'URL
+          const blob = new Blob(rtcReceivedChunks, { type: effMime });
+          const url = URL.createObjectURL(blob);
+          if (lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{} }
+          lastObjectURL = url;
+
+          const fname = rtcFilename || currentFilename || 'fichier';
+          const save = () => downloadUrl(url, fname);
+
+          // décision lire / télécharger
+          if (effKind === 'file') {
+            downloadUrl(url, fname);
+            sendConfirmation(`Fichier reçu par ${userIP}: ${fname}`);
+          } else if (effMime.startsWith('video')) {
+            showVideo(url, effMime, fname); // ⬅️ AU LIEU DE routeMediaByMime(...)
+            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
+          } else if (effMime.startsWith('audio')) {
+            showAudio(url);
+            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
+          } else if (effMime.startsWith('image')) {
+            showImage(url);
+            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
+          } else {
+            downloadUrl(url, fname);
+            sendConfirmation(`Blob (${effMime||'inconnu'}) reçu par ${userIP} (téléchargement)`);
+          }
+
+          // reset état RTC
+          rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
+          return;
+        }
+
+        // autres messages app (audio/url, video/url, image/url, chat si tu veux l’y faire passer)
+        if (msg.type === 'audio' && msg.url) {
+			showAudio(msg.url);
+			sendConfirmation(`${userIP} a reçu l'audio (URL via RTC)`);
+			return;
+		}
+        else if (msg.type === 'video' && msg.url) {
+			showVideo(msg.url);
+			sendConfirmation(`${userIP} a reçu la vidéo (URL via RTC)`);
+			return;
+		}
+        else if (msg.type === 'image' && msg.url) {
+			showImage(msg.url);
+			sendConfirmation(`${userIP} a reçu l'image (URL via RTC)`);
+			return;
+		}
+        else if (msg.type === 'chat') {
+          if (msg.from === myId) return; // évite le doublon
+          const name = msg.fromName || msg.from;
+          appendChat({ from: name, text: msg.text || '' }, false);
+          return;
+        } // si tu veux relayer le chat en RTC
+		else if (msg.type === 'sync') {
+		  if (ignoreMedia) return;
+		  const el = !videoPlayer.classList.contains('hidden') ? videoPlayer
+             : !audioPlayer.classList.contains('hidden') ? audioPlayer
+             : null;
+		  if (!el) return;
+		  if (msg.action === 'seek' && typeof msg.time === 'number') {
+		    const doSeek = () => { el.currentTime = msg.time; };
+		    if (el.readyState >= 1) { // HAVE_METADATA
+			  doSeek();
+		    } else {
+		      el.addEventListener('loadedmetadata', doSeek, { once: true });
+		    }
+		  }
+		  else if (msg.action === 'play')  el.play().catch(() => {});
+		  else if (msg.action === 'pause') el.pause();
+		  return;
+		}
+        return;
+      }
+
+      // Binaire (chunks)
+      if (ignoreMedia) return;
+      const t = data?.constructor?.name;
+      if (t === 'Blob' || t === 'ArrayBuffer') rtcReceivedChunks.push(data);
+    }catch(e){
+      recvError.textContent = `Erreur RTC : ${e.message}`;
+      console.error(e);
+    }
+  }
+	
+  // Par défaut avant toute interaction : mode récepteur, désactivé
+  receiverCard.classList.remove('hidden'); 
+  emitterCard.classList.add('hidden');
+  deactivate();
+  if (!window.__nickname) window.__nickname = userNick;
+  </script>
+</body>
+</html>

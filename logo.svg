@@ -1,0 +1,46 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="100%" height="100%">
+  <defs>
+    <linearGradient id="tunBody" x1="0" y1="126" x2="0" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#4a4c54"/>
+      <stop offset="100%" stop-color="#121216"/>
+    </linearGradient>
+
+    <linearGradient id="ringGrad" x1="0" y1="126" x2="0" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#ac57ee"/>
+      <stop offset="100%" stop-color="#712fa8"/>
+    </linearGradient>
+
+    <linearGradient id="rimGrad" x1="0" y1="126" x2="0" y2="386" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#75767d"/>
+      <stop offset="100%" stop-color="#38393e"/>
+    </linearGradient>
+
+    <radialGradient id="ballGrad" cx="38%" cy="35%" r="65%">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="35%" stop-color="#ffe98a"/>
+      <stop offset="100%" stop-color="#d9a520"/>
+    </radialGradient>
+
+    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%">
+      <feGaussianBlur stdDeviation="6.5" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+  </defs>
+
+  <rect width="512" height="512" rx="120" fill="#0b0b0d"/>
+
+  <g transform="rotate(-30 256 256)">
+    <path d="M 160 126 L 400 126 A 70 130 0 0 1 400 386 L 160 386 Z" fill="url(#tunBody)"/>
+
+    <path d="M 250 126 A 70 130 0 0 1 250 386" fill="none" stroke="url(#ringGrad)" stroke-width="22" filter="url(#glow)"/>
+    <path d="M 330 126 A 70 130 0 0 1 330 386" fill="none" stroke="url(#ringGrad)" stroke-width="22" filter="url(#glow)" opacity="0.9"/>
+
+    <ellipse cx="160" cy="256" rx="70" ry="130" fill="#050506" stroke="url(#rimGrad)" stroke-width="11"/>
+
+    <path d="M 40 256 L 95 256" stroke="#ffcf3d" stroke-width="13" stroke-linecap="round" opacity="0.85"/>
+    <path d="M 58 194 L 104 217" stroke="#ffcf3d" stroke-width="9" stroke-linecap="round" opacity="0.6"/>
+    <path d="M 58 318 L 104 295" stroke="#ffcf3d" stroke-width="9" stroke-linecap="round" opacity="0.6"/>
+
+    <circle cx="135" cy="256" r="33" fill="url(#ballGrad)" filter="url(#glow)"/>
+  </g>
+</svg>
