@@ -6,6 +6,11 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "test": "node test/signal.test.js",
+    "test:unit": "node test/unit.test.mjs",
+    "test:ui": "electron test/renderer.test.js",
+    "test:main": "electron test/main.test.js",
+    "test:all": "npm run test:unit && npm test && npm run test:ui && npm run test:main",
     "dist": "electron-builder -w"
   },
   "dependencies": {
@@ -20,6 +25,11 @@
   "build": {
     "appId": "com.lumonui.castunn",
     "productName": "Castunn",
+    "files": [
+      "**/*",
+      "!test/**",
+      "!.github/**"
+    ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico"
@@ -33,6 +43,10 @@
       {
         "from": "server.js",
         "to": "server.js"
+      },
+      {
+        "from": "discovery.js",
+        "to": "discovery.js"
       }
     ],
     "asarUnpack": [

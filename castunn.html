@@ -5,587 +5,7 @@
   <title>Castunn</title>
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
-  <style>
-   /* Catppuccin Mocha + Glassmorphism */
-
-/* ── Variables ─────────────────────────────────────────────── */
-:root {
-  --bg:        #11111b;
-  --bg2:       #181825;
-  --fg:        #cdd6f4;
-  --fg-muted:  #a6adc8;
-  --accent:    #89b4fa;
-  --accent2:   #74c7ec;
-  --ok:        #a6e3a1;
-  --ko:        #f38ba8;
-  --warn:      #fab387;
-  --error:     #f38ba8;
-  --card:      rgba(30, 30, 48, 0.85);
-  --card-border: rgba(137, 180, 250, 0.12);
-  --btn:       rgba(49, 50, 68, 0.9);
-  --btn-border: rgba(137, 180, 250, 0.18);
-  --btnh:      rgba(69, 71, 90, 0.95);
-  --input-bg:  rgba(17, 17, 27, 0.8);
-  --console-bg: rgba(15, 15, 24, 0.9);
-  --radius:    10px;
-  --radius-lg: 14px;
-  --shadow-card: 0 4px 24px rgba(0,0,0,0.45), 0 1px 0 rgba(255,255,255,0.04) inset;
-  --shadow-btn:  0 2px 8px rgba(0,0,0,0.35);
-  --glow-accent: 0 0 12px rgba(137,180,250,0.25);
-  --transition: 160ms cubic-bezier(.4,0,.2,1);
-}
-
-/* ── Reset & base ───────────────────────────────────────────── */
-*, *::before, *::after { box-sizing: border-box; }
-
-body {
-  margin: 0;
-  padding: 24px 22px 40px;
-  min-height: 100vh;
-  background:
-    radial-gradient(ellipse 80% 50% at 20% -10%, rgba(137,180,250,.07) 0%, transparent 60%),
-    radial-gradient(ellipse 60% 40% at 85% 110%, rgba(116,199,236,.05) 0%, transparent 55%),
-    var(--bg);
-  color: var(--fg);
-  font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-  font-size: 14px;
-  line-height: 1.55;
-  -webkit-font-smoothing: antialiased;
-}
-
-/* ── En-tête ────────────────────────────────────────────────── */
-h1 {
-  margin: 0 0 14px;
-  font-size: 20px;
-  font-weight: 700;
-  letter-spacing: .02em;
-  background: linear-gradient(110deg, var(--accent) 0%, var(--accent2) 100%);
-  -webkit-background-clip: text;
-  -webkit-text-fill-color: transparent;
-  background-clip: text;
-  text-shadow: none;
-}
-
-h1 + .row {
-  margin-bottom: 0;
-}
-
-small { color: var(--fg-muted); font-size: 12px; }
-
-/* ── Pill / statuts ─────────────────────────────────────────── */
-.pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  padding: 5px 11px;
-  border-radius: 999px;
-  background: rgba(24, 24, 37, 0.9);
-  border: 1px solid rgba(137,180,250,.14);
-  font-size: 12.5px;
-  color: var(--fg-muted);
-  backdrop-filter: blur(8px);
-  transition: border-color var(--transition);
-}
-.pill:hover { border-color: rgba(137,180,250,.28); }
-
-.status { font-weight: 700; font-size: 12px; letter-spacing: .03em; }
-.status.ok {
-  color: var(--ok);
-  text-shadow: 0 0 8px rgba(166,227,161,.45);
-}
-.status.ko {
-  color: var(--ko);
-  text-shadow: 0 0 8px rgba(243,139,168,.35);
-}
-
-/* ── Séparateur ─────────────────────────────────────────────── */
-.sep {
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(137,180,250,.18) 30%, rgba(137,180,250,.18) 70%, transparent);
-  margin: 14px 0;
-}
-
-/* ── Tabs ───────────────────────────────────────────────────── */
-.tabs {
-  display: flex;
-  gap: 6px;
-  margin: 0 0 16px;
-  background: rgba(17,17,27,.7);
-  border: 1px solid rgba(137,180,250,.12);
-  border-radius: 999px;
-  padding: 4px;
-  width: fit-content;
-  backdrop-filter: blur(8px);
-}
-
-.tabs button {
-  border-radius: 999px;
-  padding: 6px 18px;
-  font-size: 13px;
-  font-weight: 600;
-  background: transparent;
-  border: none;
-  color: var(--fg-muted);
-  transition: background var(--transition), color var(--transition), box-shadow var(--transition);
-}
-
-.tabs button:hover {
-  background: rgba(137,180,250,.1);
-  color: var(--fg);
-}
-
-.tabs button.active,
-.tabs button[aria-selected="true"] {
-  background: rgba(137,180,250,.18);
-  color: var(--accent);
-  box-shadow: 0 0 0 1px rgba(137,180,250,.3);
-}
-
-/* ── Grille ─────────────────────────────────────────────────── */
-.grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 18px;
-  align-items: start;
-}
-
-/* ── Cards ──────────────────────────────────────────────────── */
-.card {
-  background: var(--card);
-  border: 1px solid var(--card-border);
-  border-radius: var(--radius-lg);
-  padding: 18px 20px;
-  box-shadow: var(--shadow-card);
-  backdrop-filter: blur(12px);
-  transition: border-color var(--transition), box-shadow var(--transition);
-  position: relative;
-  overflow: hidden;
-}
-
-/* Subtil reflet supérieur */
-.card::before {
-  content: '';
-  position: absolute;
-  inset: 0 0 auto 0;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, rgba(255,255,255,.07) 40%, rgba(255,255,255,.07) 60%, transparent);
-  pointer-events: none;
-}
-
-.card:hover {
-  border-color: rgba(137,180,250,.22);
-  box-shadow: var(--shadow-card), var(--glow-accent);
-}
-
-.card h2 {
-  margin: 0 0 14px;
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: .03em;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-/* ── Labels & inputs ────────────────────────────────────────── */
-label {
-  display: block;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: .04em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
-  margin: 10px 0 5px;
-}
-
-input[type=text],
-input[type=url],
-input[type=file] {
-  width: 100%;
-  padding: 9px 12px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(60,63,82,.8);
-  background: var(--input-bg);
-  color: var(--fg);
-  font-size: 13px;
-  font-family: inherit;
-  outline: none;
-  transition: border-color var(--transition), box-shadow var(--transition);
-}
-
-input[type=text]::placeholder,
-input[type=url]::placeholder {
-  color: rgba(166,173,200,.45);
-}
-
-input[type=text]:focus,
-input[type=url]:focus {
-  border-color: rgba(137,180,250,.5);
-  box-shadow: 0 0 0 3px rgba(137,180,250,.1);
-}
-
-input[type=file] {
-  padding: 7px 10px;
-  cursor: pointer;
-  color: var(--fg-muted);
-  font-size: 12.5px;
-}
-input[type=file]::-webkit-file-upload-button {
-  background: var(--btn);
-  color: var(--fg);
-  border: 1px solid var(--btn-border);
-  border-radius: 6px;
-  padding: 4px 10px;
-  margin-right: 8px;
-  cursor: pointer;
-  font-size: 12px;
-  transition: background var(--transition);
-}
-input[type=file]::-webkit-file-upload-button:hover {
-  background: var(--btnh);
-}
-
-/* ── Boutons ────────────────────────────────────────────────── */
-button {
-  padding: 8px 14px;
-  border-radius: var(--radius);
-  border: 1px solid var(--btn-border);
-  background: var(--btn);
-  color: var(--fg);
-  font-size: 13px;
-  font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  white-space: nowrap;
-  box-shadow: var(--shadow-btn);
-  transition:
-    background var(--transition),
-    border-color var(--transition),
-    box-shadow var(--transition),
-    transform 80ms ease,
-    color var(--transition);
-  outline: none;
-}
-
-button:hover {
-  background: var(--btnh);
-  border-color: rgba(137,180,250,.3);
-  box-shadow: 0 2px 12px rgba(0,0,0,.45);
-}
-
-button:active {
-  transform: translateY(1px);
-  box-shadow: none;
-}
-
-button:focus-visible {
-  box-shadow: 0 0 0 3px rgba(137,180,250,.35);
-}
-
-/* Bouton principal (Enregistrer) */
-.btn.primary {
-  background: linear-gradient(135deg, rgba(100,130,220,.55) 0%, rgba(80,110,200,.4) 100%);
-  border-color: rgba(137,180,250,.4);
-  color: var(--accent);
-  font-weight: 600;
-}
-.btn.primary:hover {
-  background: linear-gradient(135deg, rgba(120,150,240,.65) 0%, rgba(100,130,220,.5) 100%);
-  border-color: rgba(137,180,250,.6);
-  box-shadow: 0 0 16px rgba(137,180,250,.2);
-}
-
-/* Boutons stop / destructifs visuels */
-#btnStop {
-  border-color: rgba(243,139,168,.25);
-  color: var(--ko);
-}
-#btnStop:hover {
-  background: rgba(243,139,168,.12);
-  border-color: rgba(243,139,168,.45);
-}
-
-/* Boutons d'activation / désactivation */
-#btnActivate {
-  border-color: rgba(166,227,161,.25);
-  color: var(--ok);
-}
-#btnActivate:hover {
-  background: rgba(166,227,161,.1);
-  border-color: rgba(166,227,161,.45);
-}
-
-#btnDeactivate {
-  border-color: rgba(243,139,168,.2);
-  color: var(--ko);
-}
-#btnDeactivate:hover {
-  background: rgba(243,139,168,.08);
-  border-color: rgba(243,139,168,.4);
-}
-
-/* ── Row ────────────────────────────────────────────────────── */
-.row {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  align-items: center;
-}
-
-/* ── Barre de progression ───────────────────────────────────── */
-progress {
-  width: 200px;
-  height: 6px;
-  display: none;
-  border: none;
-  border-radius: 999px;
-  overflow: hidden;
-  background: rgba(137,180,250,.12);
-  vertical-align: middle;
-}
-progress::-webkit-progress-bar {
-  background: rgba(137,180,250,.12);
-  border-radius: 999px;
-}
-progress::-webkit-progress-value {
-  background: linear-gradient(90deg, var(--accent2), var(--accent));
-  border-radius: 999px;
-  transition: width .2s ease;
-}
-progress::-moz-progress-bar {
-  background: linear-gradient(90deg, var(--accent2), var(--accent));
-  border-radius: 999px;
-}
-
-/* ── Console / log ──────────────────────────────────────────── */
-.console {
-  max-height: 180px;
-  overflow: auto;
-  border: 1px solid rgba(69,71,90,.6);
-  border-radius: var(--radius);
-  padding: 10px 12px;
-  font-size: 12px;
-  font-family: 'Cascadia Code', 'JetBrains Mono', 'Fira Code', ui-monospace, monospace;
-  line-height: 1.65;
-  background: var(--console-bg);
-  white-space: pre-wrap;
-  color: var(--fg-muted);
-  scrollbar-width: thin;
-  scrollbar-color: rgba(137,180,250,.25) transparent;
-}
-.console::-webkit-scrollbar { width: 4px; }
-.console::-webkit-scrollbar-track { background: transparent; }
-.console::-webkit-scrollbar-thumb { background: rgba(137,180,250,.25); border-radius: 999px; }
-
-/* ── Lecteurs ────────────────────────────────────────────────── */
-.players { display: grid; gap: 10px; }
-
-video {
-  max-width: 100%;
-  height: auto;
-  background: #000;
-  border-radius: var(--radius);
-  box-shadow: 0 4px 20px rgba(0,0,0,.5);
-}
-
-img#imageViewer,
-img#localImage {
-  max-width: 100%;
-  height: auto;
-  border-radius: var(--radius);
-  display: none;
-  box-shadow: 0 4px 20px rgba(0,0,0,.4);
-}
-
-audio {
-  width: 100%;
-  border-radius: var(--radius);
-  filter: invert(0.88) hue-rotate(180deg) saturate(0.8);
-}
-
-/* ── Labels visuels dans les cards ─────────────────────────── */
-strong {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
-}
-
-/* ── Utilitaires ────────────────────────────────────────────── */
-.muted { color: var(--fg-muted); }
-.hidden { display: none !important; }
-
-/* ── Engrenage / bouton settings ────────────────────────────── */
-.settings-gear {
-  position: fixed;
-  top: 16px;
-  right: 18px;
-  z-index: 1100;
-  width: 36px;
-  height: 36px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-radius: 999px;
-  border: 1px solid rgba(137,180,250,.18);
-  background: rgba(17,17,27,.75);
-  backdrop-filter: blur(10px);
-  cursor: pointer;
-  user-select: none;
-  box-shadow: 0 2px 12px rgba(0,0,0,.4);
-  transition: transform .2s ease, background .2s ease, border-color .2s ease, box-shadow .2s ease;
-  color: var(--fg-muted);
-}
-.settings-gear:hover {
-  transform: rotate(35deg) scale(1.08);
-  background: rgba(30,30,50,.9);
-  border-color: rgba(137,180,250,.4);
-  box-shadow: 0 0 16px rgba(137,180,250,.2);
-  color: var(--accent);
-}
-.settings-gear svg {
-  width: 18px;
-  height: 18px;
-  flex-shrink: 0;
-  display: block;
-}
-
-/* ── Modal paramètres ───────────────────────────────────────── */
-.settings-modal {
-  position: fixed;
-  inset: 0;
-  z-index: 1200;
-  display: none;
-  align-items: center;
-  justify-content: center;
-  background: rgba(0,0,0,.6);
-  backdrop-filter: blur(4px);
-}
-.settings-modal[aria-hidden="false"] { display: flex; }
-
-.settings-card {
-  width: min(540px, 93vw);
-  padding: 24px 22px 20px;
-  border-radius: var(--radius-lg);
-  border: 1px solid rgba(137,180,250,.15);
-  background: rgba(20,21,34,.97);
-  color: var(--fg);
-  box-shadow: 0 20px 50px rgba(0,0,0,.6), 0 1px 0 rgba(255,255,255,.05) inset;
-  font-family: inherit;
-  backdrop-filter: blur(20px);
-  animation: modal-in .18s cubic-bezier(.4,0,.2,1);
-}
-
-@keyframes modal-in {
-  from { opacity: 0; transform: translateY(12px) scale(.97); }
-  to   { opacity: 1; transform: translateY(0) scale(1); }
-}
-
-.settings-card h2 {
-  margin: 0 0 16px;
-  font-size: 16px;
-  font-weight: 700;
-  color: var(--accent);
-  letter-spacing: .03em;
-}
-
-.settings-row { display: grid; gap: 6px; margin: 14px 0; }
-
-.settings-label {
-  font-size: 11.5px;
-  font-weight: 700;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  color: var(--fg-muted);
-}
-
-.settings-input {
-  width: 100%;
-  padding: 10px 13px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(60,63,82,.9);
-  outline: none;
-  background: rgba(11,11,20,.8);
-  color: var(--fg);
-  font-size: 13.5px;
-  font-family: inherit;
-  transition: border-color var(--transition), box-shadow var(--transition);
-}
-.settings-input::placeholder { color: rgba(127,132,154,.55); }
-.settings-input:focus {
-  border-color: rgba(137,180,250,.5);
-  box-shadow: 0 0 0 3px rgba(137,180,250,.1);
-}
-
-.settings-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid rgba(137,180,250,.1);
-}
-
-/* Boutons .btn dans la modal */
-.btn {
-  padding: 9px 16px;
-  border-radius: var(--radius);
-  border: 1px solid rgba(60,63,82,.8);
-  background: rgba(42,45,65,.8);
-  color: var(--fg);
-  font-size: 13px;
-  font-family: inherit;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
-}
-.btn:hover { background: rgba(60,63,82,.9); border-color: rgba(137,180,250,.25); }
-.btn:focus { outline: 2px solid rgba(137,180,250,.45); outline-offset: 2px; }
-
-/* ── Tchat ──────────────────────────────────────────────────── */
-#chatLog {
-  max-height: 220px;
-  margin-bottom: 10px;
-  font-family: 'Cascadia Code', 'JetBrains Mono', ui-monospace, monospace;
-}
-
-#chatInput {
-  flex: 1;
-  min-width: 0;
-}
-
-/* ── Scrollbar globale ──────────────────────────────────────── */
-::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: transparent; }
-::-webkit-scrollbar-thumb { background: rgba(137,180,250,.2); border-radius: 999px; }
-::-webkit-scrollbar-thumb:hover { background: rgba(137,180,250,.38); }
-
-/* Masque le <br> parasite dans la grille */
-.grid > br {
-  display: none;
-}
-
-/* Emetteur et Récepteur occupent toujours colonne 1 / ligne 1 */
-#emitter,
-#receiver {
-  grid-column: 1;
-  grid-row: 1;
-}
-
-/* Tchat ancré en colonne 2 / ligne 1, en face */
-#chat {
-  grid-column: 2;
-  grid-row: 1;
-}
-
-#emitter.drag-over {
-  border-color: rgba(137,180,250,.55);
-  box-shadow: var(--shadow-card), 0 0 0 3px rgba(137,180,250,.15);
-  background: rgba(137,180,250,.05);
-}
-  </style>
+  <link rel="stylesheet" href="styles/castunn.css">
 </head>
 <body>
   <!-- <h1>Castunn</h1> -->
@@ -604,7 +24,13 @@ strong {
 
   <div class="grid">
     <!-- Emetteur -->
-    <section id="emitter" class="card">
+    <!-- L'état de départ est celui que le script appliquait jusqu'ici en fin
+         d'exécution : récepteur visible, émetteur masqué. En le posant dans le
+         balisage, l'affichage est correct dès la première image, même si le
+         JavaScript tarde à s'exécuter (machine lente, antivirus, module en
+         cours de chargement). Auparavant les deux cartes se superposaient
+         pendant tout ce délai. -->
+    <section id="emitter" class="card hidden">
       <h2>Emetteur</h2>
       <div>
         <label for="audioUrl">URL audio</label>
@@ -707,6 +133,9 @@ strong {
 		  <div class="settings-row">
 			<label for="serverIp" class="settings-label">IP/URL du serveur de signalisation</label>
 			<input id="serverIp" name="serverIp" class="settings-input" type="text" placeholder="ex. wss://signal.example.org" autocomplete="off" />
+			<p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			  Laissez vide pour chercher automatiquement un serveur Castunn sur votre réseau local.
+			</p>
 		  </div>
 		  <div class="settings-row">
 			<label for="nickname" class="settings-label">Pseudo</label>
@@ -731,26 +160,62 @@ strong {
 	  </div>
 	</div>
 
-  <script>
+  <script type="module">
+  import {
+    cleanPeerIp, formatSelfName, guessMimeByExt
+  } from './src/renderer/protocol.js';
+  import { createMediaReceiver } from './src/renderer/media-receiver.js';
+  import { createPeerRegistry } from './src/renderer/peers.js';
+  import { resolveSignalUrl, buildWsUrl } from './src/renderer/signal-url.js';
+  import { setErrorSink, reportError, installGlobalErrorHandlers } from './src/renderer/errors.js';
+
   /* === Etat global === */
   let socket;
   let userIP = '';
   let userNick = '';
   let isActivated = false;
   let ignoreMedia = false; // drop total des médias tant que désactivé
-  let dropCurrentBlob = false;
-  
-  const peersMap = new Map(); // peerId → { ip, nick }
-  
+
+  // Registre des pairs (src/renderer/peers.js) : il tient les identités, on ne
+  // s'occupe ici que de les afficher.
+  const peersMap = createPeerRegistry({ onChange: () => updatePeersDisplay() });
+
+  const peerLabel = (peerId, info) => peersMap.label(peerId, info);
+
   function updatePeersDisplay() {
     const el = document.getElementById('peersCount');
     const pill = document.getElementById('peersPill');
     if (!el) return;
     el.textContent = peersMap.size;
-    const names = [...peersMap.values()]
-      .map(p => p.nick ? `${p.ip} (${p.nick})` : (p.ip || '?'))
-      .join('\n');
-    pill.title = names || 'Aucun pair connecté';
+    pill.title = peersMap.labels().join('\n') || 'Aucun pair connecté';
+  }
+
+  /* --- Lignes système "Connexion de ..." -------------------------------
+   * On garde une référence sur la ligne affichée : si l'identité du pair
+   * arrive après coup (message `announce`), on réécrit la ligne au lieu de
+   * laisser un identifiant cryptique dans l'historique.
+   * ------------------------------------------------------------------- */
+  const presenceLines = new Map(); // peerId -> { el, ts, action }
+
+  function presenceText(peerId, action) {
+    if (action === 'leave')   return `Déconnexion de ${peerLabel(peerId)}`;
+    if (action === 'present') return `Déjà présent : ${peerLabel(peerId)}`;
+    return `Connexion de ${peerLabel(peerId)}`;
+  }
+
+  function announcePresence(peerId, action) {
+    const ts = Date.now();
+    const el = appendChat({ from: '[système]', text: presenceText(peerId, action), ts }, false);
+    if (!peerId) return;
+    if (action === 'leave') presenceLines.delete(peerId);
+    else presenceLines.set(peerId, { el, ts, action });
+  }
+
+  function refreshPresenceLine(peerId) {
+    const entry = presenceLines.get(peerId);
+    if (!entry || !entry.el) return;
+    const ts = new Date(entry.ts).toLocaleTimeString();
+    entry.el.textContent = `[${ts}] [système]: ${presenceText(peerId, entry.action)}`;
   }
   
   function sendAnnounce() {
@@ -805,7 +270,8 @@ strong {
   let peerId = null;         // id distant choisi
   const room = 'default';    // simple room (tu peux la rendre paramétrable)
 
-  let receivedChunks = [];
+  // currentMime/Kind/Filename ne servent plus qu'aux chemins "URL" et aux
+  // replis d'affichage : l'assemblage des blobs vit dans les récepteurs.
   let currentMime = '';
   let currentKind = ''; // 'audio' | 'video' | 'image' | 'file'
   let currentFilename = '';
@@ -837,43 +303,82 @@ strong {
   }
 
   function buildWsUrlFromInput() {
-    const raw = readModalHost();
-    if (!raw) return null;
+    return buildWsUrl(readModalHost(), { pageProtocol: location.protocol });
+  }
 
-    // Déjà ws:// ou wss:// → ok tel quel
-    if (/^wss?:\/\//i.test(raw)) return raw;
+  const LOCAL_PORT = 8080;
+  // Dernier serveur local découvert, réutilisé en priorité aux reconnexions
+  // pour ne pas relancer un scan complet à chaque coupure.
+  // Mémorisé d'une session à l'autre : au démarrage suivant, la connexion est
+  // immédiate au lieu de rebalayer tout le sous-réseau (plusieurs secondes).
+  // Si l'hôte a changé de place, l'échec de connexion déclenche un nouveau
+  // balayage — on ne perd donc rien à faire confiance à cette valeur.
+  const HOST_CACHE_KEY = 'castunn.signalHost';
+  let lastDiscoveredHost = (() => {
+    try { return localStorage.getItem(HOST_CACHE_KEY) || null; } catch { return null; }
+  })();
 
-    // Si l'utilisateur met http(s):// → convertir en ws(s)://
-    if (/^https?:\/\//i.test(raw)) {
-      return raw.replace(/^http/i, 'ws');
+  // Version synchrone, pour les reconnexions automatiques : elle réutilise ce
+  // qui est déjà connu et ne déclenche jamais de balayage.
+  function resolveSignalUrlSync() {
+    return buildWsUrlFromInput()
+      || CF_WORKER_URL
+      || ((location.protocol !== 'file:' && location.host)
+            ? `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}`
+            : null)
+      || (lastDiscoveredHost ? `ws://${lastDiscoveredHost}` : `ws://127.0.0.1:${LOCAL_PORT}`);
+  }
+
+  /**
+   * Résolution complète (voir src/renderer/signal-url.js) : saisie utilisateur,
+   * puis hôte de la page, puis découverte réseau, puis machine locale.
+   */
+  async function resolveSignalUrlAsync({ rescan = false } = {}) {
+    const discover = window.serverControl?.discover
+      ? (opts) => window.serverControl.discover(opts)
+      : null;
+
+    if (discover && !buildWsUrlFromInput() && (rescan || !lastDiscoveredHost)) {
+      setWsStatus('Recherche…');
     }
 
-    // Sinon, c'est un host:port → on préfixe selon le contexte
-    const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
-    return `${scheme}://${raw}`;
+    const { url, host, source } = await resolveSignalUrl({
+      typed: readModalHost(),
+      fixedUrl: CF_WORKER_URL,
+      pageProtocol: location.protocol,
+      pageHost: location.host,
+      knownHost: lastDiscoveredHost,
+      rescan,
+      discover,
+      localPort: LOCAL_PORT,
+      log: (m) => addConsole(`[WS] ${m}`)
+    });
+
+    if (host && source === 'découverte') {
+      lastDiscoveredHost = host;
+      try { localStorage.setItem(HOST_CACHE_KEY, host); } catch {}
+    }
+    return url;
   }
 
-  function defaultSignalUrl() {
-    // Priorité au Worker si renseigné
-    if (CF_WORKER_URL) return CF_WORKER_URL;
-
-    // Si on est en file://, pas de host → fallback localhost
-    if (location.protocol === 'file:') return 'ws://192.168.1.16:8080';
-
-    // Sinon, on utilise le host courant (si présent)
-    const host = location.host || '192.168.1.16:8080';
-    const scheme = (location.protocol === 'https:') ? 'wss' : 'ws';
-    return `${scheme}://${host}`;
-  }
-
-  function resolveSignalUrl() {
-    // 1) ce que l'utilisateur a tapé ; 2) fallback par défaut
-    return buildWsUrlFromInput() || defaultSignalUrl();
+  /**
+   * Remet à zéro tout ce qui dépend de la session WebSocket courante.
+   * Sans ça, les pairs de la session précédente restaient dans peersMap
+   * (compteur qui ne redescend jamais) et l'ancienne RTCPeerConnection,
+   * morte, empêchait d'en établir une nouvelle (ensurePeerConnection
+   * renvoie `pc` s'il est non nul).
+   */
+  function resetPeerState() {
+    peersMap.clear();
+    try { dc?.close(); } catch {}
+    try { pc?.close(); } catch {}
+    pc = null; dc = null; peerId = null;
+    setRtcStatus('Déconnecté');
   }
 
   // Reconnexion propre en lisant la valeur de la modale (ou le fallback)
-  function connectFromModal() {
-    const url = resolveSignalUrl();
+  async function connectFromModal(opts) {
+    const url = await resolveSignalUrlAsync(opts);
     if (!url) {
       addConsole('[WS] Aucune URL fournie (modale vide et aucun fallback).');
       setWsStatus('Erreur URL');
@@ -883,37 +388,36 @@ strong {
     if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
       try {
         const oldSocket = socket;
-        oldSocket.onclose = () => createSocket(url); // n’ouvre qu’après fermeture
+        oldSocket.onclose = () => { resetPeerState(); createSocket(url); }; // n’ouvre qu’après fermeture
         oldSocket.close(1000, 'reconnect');
         return; // on sort pour ne pas appeler createSocket tout de suite
-      } catch {}
+      } catch (e) {
+        // On enchaîne quand même sur une nouvelle socket, mais sans masquer
+        // la raison de l'échec de fermeture.
+        reportError('fermeture de la connexion précédente', e);
+      }
     }
 
     createSocket(url);
   }
 
   function getDisplayName() {
-    const ip = (window.userIP || '').trim();
-    const nick = (window.__nickname || '').trim();
-    if (!ip) return 'inconnu';          // pas d'IP => on n'affiche PAS "(pseudo)"
-    return nick ? `${ip}(${nick})` : ip; // IP seule si pas de pseudo
+    return formatSelfName({ ip: window.userIP, nick: window.__nickname });
   }
 
   // Envoi « application » : passe par RTC si possible, sinon WS
   function sendApp(obj){
     const payload = (typeof obj === 'string') ? obj : JSON.stringify(obj);
-    if (rtcReady()) { try { dc.send(payload); return true; } catch{} }
+    // Un échec d'envoi RTC fait basculer sur le WebSocket : c'est voulu, mais
+    // il faut pouvoir le constater, sinon un transfert lent reste inexpliqué.
+    if (rtcReady()) {
+      try { dc.send(payload); return true; }
+      catch (e) { reportError('envoi RTC (bascule sur WebSocket)', e); }
+    }
     return sendJSON(obj); // ta fonction WS existante
   }
 
-  function guessMimeByExt(name){
-    const ext = (name.split('.').pop() || '').toLowerCase();
-    if (ext === 'mp4' || ext === 'm4v') return 'video/mp4';
-    if (ext === 'webm') return 'video/webm';
-    if (ext === 'mov') return 'video/quicktime';
-    if (ext === 'mkv') return 'video/x-matroska';
-    return 'application/octet-stream';
-  }
+  // guessMimeByExt vient de ./src/renderer/protocol.js
 
   // pour libérer la mémoire des blobs
   let lastObjectURL = null;
@@ -1068,24 +572,71 @@ function showLocalImage(url){
     localPanel.classList.add('hidden'); // on cache juste le sous-panneau
   };
 
-  // IP publique
-  fetch('https://api.ipify.org?format=json')
-    .then(r=>r.json()).then(d=>{
-      userIP = d.ip;
-	  window.userIP = userIP;
-	  chatSend.disabled = false;
-	  sendAnnounce(); // ré-annonce avec l'IP maintenant connue
-    }).catch(()=>{
-      userNick='User-'+Math.random().toString(36).slice(2,7);
-      // si tu veux forcer l’IP pour envoyer, laisse désactivé en cas d’échec.
-      // Sinon, réactive malgré tout :
-      // chatSend.disabled = false;
-    });
+  // IP publique — résolue une seule fois, exposée via une promesse pour que
+  // le "join" puisse l'inclure (sinon le serveur ne connaît que l'adresse du
+  // reverse proxy et diffuse "::1" aux autres pairs).
+  const IP_CACHE_KEY = 'castunn.publicIp';
+  const readCachedIp  = () => { try { return localStorage.getItem(IP_CACHE_KEY) || ''; } catch { return ''; } };
+  const writeCachedIp = (v) => { try { localStorage.setItem(IP_CACHE_KEY, v); } catch {} };
+
+  /** Interroge plusieurs services : un seul point de défaillance, c'est trop peu. */
+  async function fetchPublicIp() {
+    const sources = [
+      { url: 'https://api.ipify.org?format=json', pick: (r) => r.json().then(j => j.ip) },
+      { url: 'https://ipv4.icanhazip.com',        pick: (r) => r.text().then(t => t.trim()) }
+    ];
+    for (const s of sources) {
+      try {
+        const r = await fetch(s.url, { cache: 'no-store' });
+        if (!r.ok) continue;
+        const v = await s.pick(r);
+        if (v) return v;
+      } catch { /* on essaie la source suivante */ }
+    }
+    return '';
+  }
+
+  // Valeur de la dernière session : disponible immédiatement, donc utilisable
+  // par le tout premier "join". Elle est remplacée dès que le réseau répond
+  // (et une ré-annonce corrige les pairs si l'adresse a changé).
+  userIP = readCachedIp();
+  window.userIP = userIP;
+
+  const publicIpReady = fetchPublicIp().then((ip) => {
+    if (ip) {
+      const changed = ip !== userIP;
+      userIP = ip;
+      window.userIP = userIP;
+      writeCachedIp(ip);
+      if (changed) sendAnnounce(); // ré-annonce avec l'IP maintenant connue
+    } else {
+      addConsole('[WS] IP publique indisponible : les autres vous verront via votre pseudo.');
+    }
+    // Le tchat ne doit pas dépendre d'un service externe : en LAN, l'identité
+    // vient du serveur lui-même.
+    chatSend.disabled = false;
+    return userIP;
+  });
+
+  // Attend l'IP publique, mais jamais plus de `ms` : hors de question de
+  // bloquer la connexion parce qu'ipify est lent ou injoignable.
+  function waitForPublicIp(ms = 1500) {
+    if (userIP) return Promise.resolve(userIP);
+    return Promise.race([
+      publicIpReady,
+      new Promise((resolve) => setTimeout(() => resolve(userIP || ''), ms))
+    ]);
+  }
 
   /* === WebSocket === */
   let wsGen = 0;
-  function createSocket(url = resolveSignalUrl()){
+  let wsFailCount = 0;
+  function createSocket(url = resolveSignalUrlSync()){
     try {
+      // Savoir à quel serveur on parle est la première question à se poser
+      // quand « ça ne marche pas ».
+      addConsole(`[WS] connexion à ${url}`);
+      window.__castunnSignalUrl = url;
       socket = new WebSocket(url);
       socket.binaryType = 'arraybuffer';
     } catch (e) {
@@ -1097,11 +648,30 @@ function showLocalImage(url){
     const thisSocket = socket;
     const myGen = ++wsGen;
 
-    socket.onopen = ()=>{
+    socket.onopen = async ()=>{
       if (wsGen !== myGen) return;
-      setWsStatus('Connecté');
+      // Pas encore "Connecté" : tant que le join n'est pas parti, on n'est pas
+      // dans la room et on ne reçoit aucune présence.
+      setWsStatus('Connexion…');
+      wsFailCount = 0;
       ctrlError.textContent = ''; recvError.textContent = '';
-      socket.send(JSON.stringify({ type: 'join', room }));
+
+      // On repart d'une liste de pairs vierge : ceux de la session précédente
+      // ne sont plus les nôtres (sinon le compteur ne redescend jamais).
+      peersMap.clear();
+
+      // Le serveur ne voit que l'adresse du proxy quand il est hébergé
+      // derrière un reverse proxy : on lui annonce notre IP dès le join.
+      const ip = await waitForPublicIp();
+      if (wsGen !== myGen || thisSocket.readyState !== WebSocket.OPEN) return;
+      thisSocket.send(JSON.stringify({
+        type: 'join',
+        room,
+        ip: ip || '',
+        nick: (window.__nickname || '').trim()
+      }));
+      setWsStatus('Connecté');
+      addConsole(`[WS] join envoyé (ip=${ip || 'inconnue'}) — les autres vous verront sous ce nom.`);
 	  setTimeout(sendAnnounce, 500);
     };
 
@@ -1115,11 +685,29 @@ function showLocalImage(url){
       if (wsGen !== myGen) return;
       setWsStatus('Déconnecté');
       ctrlError.textContent = `Connexion fermée (code ${e.code}). Reconnexion dans 3 s...`;
+
+      // Le pair d'en face n'est plus joignable : on nettoie l'état RTC et la
+      // liste des pairs, sinon ils restent affichés comme connectés à vie.
+      resetPeerState();
+
       // Ne relance pas une nouvelle socket si on a fermé volontairement pour "reconnect"
       const voluntary = (e.code === 1000 && e.reason === 'reconnect');
       if (!voluntary) {
-        // Et ne relance que si c'est toujours la socket active
-        setTimeout(()=>{ if (socket === thisSocket) createSocket(); }, 3000);
+        wsFailCount++;
+        // Après 2 échecs d'affilée, l'hôte mémorisé est probablement obsolète
+        // (le serveur a changé de machine ou d'IP) → on rebalaye le réseau.
+        const rescan = wsFailCount >= 2;
+        if (rescan) {
+          // L'hôte mémorisé ne répond plus : on l'oublie, y compris pour les
+          // prochains démarrages.
+          lastDiscoveredHost = null;
+          try { localStorage.removeItem(HOST_CACHE_KEY); } catch {}
+        }
+        setTimeout(async ()=>{
+          if (socket !== thisSocket) return;
+          const url = await resolveSignalUrlAsync({ rescan });
+          if (socket === thisSocket) createSocket(url);
+        }, 3000);
       }
     };
 
@@ -1156,7 +744,7 @@ function showLocalImage(url){
           )) {
             sendConfirmation(`${userIP} a reçu ${msg.type} (WS) mais Récepteur désactivé (non lu)`);
             // si c'est un binaire annoncé, on annule d'emblée la construction
-            if (msg.type === 'binary-meta') { dropCurrentBlob = true; }
+            if (msg.type === 'binary-meta') { wsReceiver.discard(); }
             return;
           }
 
@@ -1170,8 +758,11 @@ function showLocalImage(url){
             if (msg.peers && msg.peers.length) {
               peerId = msg.peers[0];
 			  // Initialise la map avec les IDs connus (IP/nick viendront par announce)
-			  msg.peers.forEach(id => { if (!peersMap.has(id)) peersMap.set(id, { ip: id, nick: '' }); });
-			  updatePeersDisplay();
+			  // et signale ces pairs dans le tchat : sans ça on pouvait lire une
+			  // déconnexion sans avoir jamais vu la connexion correspondante.
+			  msg.peers.forEach(id => {
+			    if (peersMap.add(id)) announcePresence(id, 'present');
+			  });
 			  // On s'annonce aux pairs déjà présents
 			  sendAnnounce();
 
@@ -1254,13 +845,13 @@ function showLocalImage(url){
           }
 		  
 		  if (msg.type === 'presence') {
-		    const who = msg.ip || msg.peerId || 'inconnu';
-		    const label = msg.nick ? `${who} (${msg.nick})` : who;
+		    if (msg.peerId && msg.action === 'join') {
+			  peersMap.upsert(msg.peerId, { ip: msg.ip, nick: msg.nick });
+		    }
+		    const label = peerLabel(msg.peerId, msg.peerId ? undefined : { ip: msg.ip, nick: msg.nick });
 		    if (msg.action === 'join') {
 			  addConsole(`[WS] presence: join ${label}`);
-			  appendChat({ from: '[système]', text: `Connexion de ${label}` }, false);
-			  if (msg.peerId) peersMap?.set(msg.peerId, { ip: who, nick: msg.nick || '' });
-			  updatePeersDisplay?.();
+			  announcePresence(msg.peerId, 'join');
 			  sendAnnounce?.();
 			  // Initie RTC si on a le plus grand id et pas encore de connexion
 			  if (msg.peerId && myId && myId > msg.peerId && !pc) {
@@ -1269,10 +860,12 @@ function showLocalImage(url){
 			    if (!uploadInProgress) startRtcAsCaller();
 			  }
 		    } else if (msg.action === 'leave') {
-			  addConsole(`[WS] presence: leave ${label}`);
-			  appendChat({ from: '[système]', text: `Déconnexion de ${label}` }, false);
-			  if (msg.peerId) peersMap?.delete(msg.peerId);
-			  updatePeersDisplay?.();
+			  // Complète l'identité si le serveur l'a jointe, AVANT d'afficher
+			  // et de retirer le pair de la liste.
+			  peersMap.upsert(msg.peerId, { ip: msg.ip, nick: msg.nick });
+			  addConsole(`[WS] presence: leave ${peerLabel(msg.peerId)}`);
+			  announcePresence(msg.peerId, 'leave');
+			  peersMap.remove(msg.peerId);
 			  // nettoyage de la connexion RTC si c'était notre pair actif
 			  if (msg.peerId === peerId) {
 				addConsole('[RTC] Nettoyage de connexion après départ de pair.');
@@ -1287,8 +880,11 @@ function showLocalImage(url){
 		  
 		  if (msg.type === 'announce') {
 			if (msg.from && msg.from !== myId) {
-			  peersMap.set(msg.from, { ip: msg.ip || msg.from, nick: msg.nick || '' });
-			  updatePeersDisplay();
+			  peersMap.upsert(msg.from, { ip: msg.ip, nick: msg.nick });
+			  // L'identité arrive souvent APRÈS le "Connexion de ..." (le pair
+			  // doit d'abord récupérer son IP publique) : on corrige la ligne
+			  // déjà affichée plutôt que d'y laisser un identifiant brut.
+			  refreshPresenceLine(msg.from);
 			}
 			return;
 		  }
@@ -1319,13 +915,12 @@ function showLocalImage(url){
             }
           }
 
-          // annonces de blobs
+          // annonces de blobs (ancien format)
           if(msg.type === 'audioBlob' || msg.type === 'videoBlob' || msg.type === 'imageBlob' || msg.type === 'fileBlob'){
-            receivedChunks = [];
             currentMime = msg.mime || '';
             currentFilename = msg.filename || '';
             currentKind = (msg.type||'').replace('Blob',''); // 'audio' | 'video' | 'image' | 'file'
-            dropCurrentBlob = false;
+            wsReceiver.begin({ mime: currentMime, kind: currentKind, filename: currentFilename });
             return;
           }
 
@@ -1349,75 +944,36 @@ function showLocalImage(url){
             return;
           }
           if(msg.type === 'stop'){
-            stopAll();
-            receivedChunks = [];
             currentMime = ''; currentKind = ''; currentFilename='';
-            dropCurrentBlob = true;
-            ctrlError.textContent = ''; recvError.textContent = '';
-            sendConfirmation(`${userIP} a reçu le stop`);
+            wsReceiver.stop();
             return;
           }
           // --- annonce générique (nouveau format) ---
           if (msg.type === 'binary-meta') {
-            receivedChunks = [];
             currentMime = msg.mime || '';
             currentFilename = msg.filename || '';
             currentKind = (msg.kind || 'file'); // 'audio' | 'video' | 'image' | 'file'
-            dropCurrentBlob = false;
+            wsReceiver.begin({ mime: currentMime, kind: currentKind, filename: currentFilename });
             return;
           }
 
           if (msg.type === 'binary-cancel') {
-            // on jette le blob en construction
-            receivedChunks = [];
             currentMime = ''; currentKind = ''; currentFilename='';
-            dropCurrentBlob = true;
-            sendConfirmation(`${userIP} a annulé l'envoi`);
+            wsReceiver.cancel();
             return;
           }
 
           // --- fin générique (nouveau format) + ancien nom endBlob ---
           if (msg.type === 'binary-end' || msg.type === 'endBlob') {
-            if (!dropCurrentBlob && receivedChunks.length) {
-              const blob = new Blob(receivedChunks, { type: currentMime || 'application/octet-stream' });
-              const url = URL.createObjectURL(blob);
-              if (lastObjectURL) { try { URL.revokeObjectURL(lastObjectURL); } catch{} }
-              lastObjectURL = url;
-
-              // === DECISION / FALLBACK (WS) ===
-              const fname = currentFilename || 'fichier';
-              const save = () => downloadUrl(url, fname);
-              if (currentKind === 'file') {
-                save();
-                addConsole(`Fichier téléchargé: ${currentFilename||'fichier'}`);
-                sendConfirmation(`Fichier reçu par ${userIP}: ${currentFilename||'fichier'}`);
-              } else if (currentMime) {
-                if (currentMime.startsWith('video') && !videoPlayer.canPlayType(currentMime)) {
-                  addConsole(`Vidéo non supportée (${currentMime}), téléchargement.`);
-                  sendConfirmation(`Blob (${currentMime}) reçu par ${userIP} (vidéo non supportée)`);
-                  save();
-                } else {
-                  routeMediaByMime(url, currentMime);
-                  sendConfirmation(`Blob (${currentMime}) reçu par ${userIP}`);
-                }
-              } else if (currentKind) {
-                routeMediaByKind(url, currentKind);
-                sendConfirmation(`Blob (${currentKind}) reçu par ${userIP}`);
-              } else {
-                save(); // Aucun méta reçu : on télécharge par défaut
-              }
-            }
-            // reset
-            receivedChunks = [];
-            currentMime = ''; currentKind = ''; currentFilename='';
-            dropCurrentBlob = false;
+            wsReceiver.end();
+            currentMime = ''; currentKind = ''; currentFilename = '';
             return;
           }
 
         }else{ // Binaire
           if(ignoreMedia){ return; }
           const t = event.data?.constructor?.name;
-          if(t === 'Blob' || t === 'ArrayBuffer'){ receivedChunks.push(event.data); }
+          if(t === 'Blob' || t === 'ArrayBuffer'){ wsReceiver.push(event.data); }
         }
       }catch(err){
         recvError.textContent = `Erreur message : ${err.message}`;
@@ -1425,9 +981,15 @@ function showLocalImage(url){
       }
     };
   }
-  // Auto connexion au chargement de la page
+  // Auto connexion au chargement de la page.
+  // Déclenchée seulement après le premier rendu : la recherche d'un serveur
+  // sur le réseau prend quelques secondes, et rien ne justifie que l'interface
+  // attende son résultat pour s'afficher et répondre.
+  // Surtout pas requestAnimationFrame : il ne se déclenche pas tant que la
+  // fenêtre n'est pas rendue (minimisée, en arrière-plan), et l'application
+  // ne se connecterait alors jamais.
   window.addEventListener('DOMContentLoaded', () => {
-    connectFromModal();
+    setTimeout(() => connectFromModal(), 0);
   });
 
 
@@ -1662,7 +1224,11 @@ function showLocalImage(url){
         else if (kind === 'video') showLocalVideo(nextUrl);
         else                       showLocalImage(nextUrl);
       }
-    }catch{}
+    }catch(e){
+      // La prévisualisation locale a échoué : l'envoi continue, mais l'émetteur
+      // doit savoir pourquoi il ne voit pas son propre média.
+      reportError('aperçu local du média', e);
+    }
 
     const CHUNK = 64 * 1024; // 64 Ko (fiable et efficace)
     let offset = 0;
@@ -1736,6 +1302,12 @@ function showLocalImage(url){
     consoleLog.scrollTop = consoleLog.scrollHeight;
   }
 
+  // Toute erreur — y compris non capturée, y compris dans les modules —
+  // devient lisible dans la console de l'application. Sans ça, un échec
+  // JavaScript ne laissait aucune trace visible par l'utilisateur.
+  setErrorSink(addConsole);
+  installGlobalErrorHandlers();
+
   function sendConfirmation(text){
     if(socket?.readyState === 1){
       socket.send(JSON.stringify({type:'confirmation', text}));
@@ -1751,6 +1323,7 @@ function showLocalImage(url){
     line.textContent = `[${ts}] ${who}: ${msg.text || ''}`;
     chatLog.appendChild(line);
     chatLog.scrollTop = chatLog.scrollHeight;
+    return line;
   }
   function sendChat(){
     const text = chatInput.value.trim();
@@ -1853,6 +1426,33 @@ function showLocalImage(url){
     a.remove();
   }
 
+  /* === Réception des médias ============================================
+   * Une seule machine à états (src/renderer/media-receiver.js), instanciée
+   * une fois par transport : les deux flux sont indépendants, mais le
+   * comportement — quoi lire, quoi télécharger, quand jeter — est commun.
+   * ===================================================================== */
+  function makeMediaReceiver(label) {
+    return createMediaReceiver({
+      label,
+      render: (url, target, info) => {
+        if (target === 'video') showVideo(url, info.mime, info.filename);
+        else if (target === 'audio') showAudio(url);
+        else showImage(url);
+      },
+      download: (url, filename) => downloadUrl(url, filename),
+      canPlayVideo: (mime) => !!videoPlayer.canPlayType(mime),
+      log: (text) => addConsole(text),
+      confirm: (text) => sendConfirmation(`${getDisplayName()} — ${text}`),
+      stopPlayback: () => {
+        stopAll();
+        ctrlError.textContent = '';
+        recvError.textContent = '';
+      }
+    });
+  }
+  const wsReceiver  = makeMediaReceiver('WS');
+  const rtcReceiver = makeMediaReceiver('RTC');
+
   function routeMediaByMime(url, mime){
     if (mime?.startsWith('video')) showVideo(url);
     else if (mime?.startsWith('audio')) showAudio(url);
@@ -1895,7 +1495,8 @@ function showLocalImage(url){
       // Stockage en mémoire volatile pour la session uniquement
       window.__signalIp = (ip.value || '').trim();
       window.__nickname = (nick.value || '').trim();
-      connectFromModal();
+      // Champ vidé => l'utilisateur veut revenir en mode auto : on rebalaye.
+      connectFromModal({ rescan: !window.__signalIp });
       closeModal();
 	  });
 	  
@@ -1908,9 +1509,13 @@ function showLocalImage(url){
 		localServerRow.style.display = '';
 
 		async function refreshServerState() {
-		  const { running } = await window.serverControl.status();
+		  const { running, addresses } = await window.serverControl.status();
 		  btnToggleServer.textContent = running ? 'Arrêter le serveur local' : 'Lancer le serveur local';
-		  localServerStatus.textContent = running ? '● Actif sur :8080' : '○ Arrêté';
+		  // Affiche les vraies adresses de la machine : c'est celles-ci que les
+		  // autres postes doivent joindre (et si ça ne passe pas, c'est le
+		  // pare-feu qui bloque le port 8080 en entrée).
+		  const where = (addresses && addresses.length) ? addresses.join(' · ') : ':8080';
+		  localServerStatus.textContent = running ? `● Actif sur ${where}` : '○ Arrêté';
 		  localServerStatus.style.color = running ? 'var(--ok)' : '#7f849a';
 		}
 
@@ -1927,9 +1532,14 @@ function showLocalImage(url){
 			  btnToggleServer.disabled = false;
 			  return;
 			}
+			if (res.firewall && !res.firewall.ok) {
+			  addConsole(`[pare-feu] Règle non posée (${res.firewall.reason}). Si les autres machines n'arrivent pas à se connecter, autorisez Castunn sur les réseaux privés.`);
+			}
 			await refreshServerState();
-			// Se connecte automatiquement si aucun serveur personnalisé n'est renseigné
-			if (!window.__signalIp) connectFromModal();
+			// Se connecte automatiquement si aucun serveur personnalisé n'est renseigné.
+			// rescan : notre serveur local vient de démarrer, il a priorité sur
+			// l'hôte distant éventuellement mémorisé.
+			if (!window.__signalIp) connectFromModal({ rescan: true });
 		  }
 		  btnToggleServer.disabled = false;
 		});
@@ -2082,10 +1692,9 @@ function showLocalImage(url){
     }
   }
 
-  // Réception côté RTC (mêmes types que WS : binary-meta, endBlob, stop, chat, audio/video/image, etc.)
-  let rtcReceivedChunks = [];
-  let rtcMime = '', rtcKind = '', rtcFilename = '';
-
+  // Réception côté RTC (mêmes types que WS : binary-meta, endBlob, stop, chat,
+  // audio/video/image...). L'assemblage est délégué à rtcReceiver, jumeau de
+  // wsReceiver : plus de variables d'état parallèles ni de logique dupliquée.
   function handleRtcIncoming(data){
     try{
       if (typeof data === 'string') {
@@ -2097,82 +1706,26 @@ function showLocalImage(url){
           msg.type === 'file'  || msg.type === 'binary-meta'
         )) {
           sendConfirmation(`${userIP} a reçu ${msg.type} (RTC) mais Récepteur désactivé (non lu)`);
-          if (msg.type === 'binary-meta') { dropCurrentBlob = true; rtcReceivedChunks = []; }
+          if (msg.type === 'binary-meta') { rtcReceiver.discard(); }
           return;
         }
 
         if (msg.type === 'stop') {
-          rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
-          dropCurrentBlob = true; // réutilise ta logique
-          sendConfirmation(`Stop reçu (RTC) par ${userIP}`);
+          rtcReceiver.stop();
           return;
         }
         if (msg.type === 'binary-meta') {
-          rtcMime = msg.mime || '';
-          rtcKind = msg.kind || '';
-          rtcFilename = msg.filename || 'fichier';
-          dropCurrentBlob = false;
-          rtcReceivedChunks = [];
-          addConsole(`[RTC] META: ${rtcFilename} (${rtcMime || 'mime inconnu'})`);
+          rtcReceiver.begin({ mime: msg.mime, kind: msg.kind, filename: msg.filename });
           return;
         }
 
         if (msg.type === 'binary-cancel') {
-          // on jette le blob en construction
-          rtcReceivedChunks = [];
-          rtcMime = '';
-          rtcKind = '';
-          rtcFilename = '';
-          dropCurrentBlob = true;
-          sendConfirmation(`${userIP} a annulé l'envoi (RTC)`);
+          rtcReceiver.cancel();
           return;
         }
 
         if (msg.type === 'binary-end' || msg.type === 'endBlob') {
-          // rien à faire si on a demandé de jeter le flux ou s'il est vide
-          if (dropCurrentBlob || !rtcReceivedChunks.length) {
-            rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
-            return;
-          }
-
-          // MIME/Kind effectifs avec repli sur les valeurs WS si besoin
-          const effMime = rtcMime || currentMime || 'application/octet-stream';
-          const effKind = rtcKind || currentKind || (
-            effMime.startsWith('video') ? 'video'
-            : effMime.startsWith('audio') ? 'audio'
-            : effMime.startsWith('image') ? 'image'
-            : 'file'
-          );
-
-          // construire l'URL
-          const blob = new Blob(rtcReceivedChunks, { type: effMime });
-          const url = URL.createObjectURL(blob);
-          if (lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{} }
-          lastObjectURL = url;
-
-          const fname = rtcFilename || currentFilename || 'fichier';
-          const save = () => downloadUrl(url, fname);
-
-          // décision lire / télécharger
-          if (effKind === 'file') {
-            downloadUrl(url, fname);
-            sendConfirmation(`Fichier reçu par ${userIP}: ${fname}`);
-          } else if (effMime.startsWith('video')) {
-            showVideo(url, effMime, fname); // ⬅️ AU LIEU DE routeMediaByMime(...)
-            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
-          } else if (effMime.startsWith('audio')) {
-            showAudio(url);
-            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
-          } else if (effMime.startsWith('image')) {
-            showImage(url);
-            sendConfirmation(`Blob (${effMime}) reçu par ${userIP}`);
-          } else {
-            downloadUrl(url, fname);
-            sendConfirmation(`Blob (${effMime||'inconnu'}) reçu par ${userIP} (téléchargement)`);
-          }
-
-          // reset état RTC
-          rtcReceivedChunks = []; rtcMime=''; rtcKind=''; rtcFilename='';
+          rtcReceiver.end();
           return;
         }
 
@@ -2222,7 +1775,7 @@ function showLocalImage(url){
       // Binaire (chunks)
       if (ignoreMedia) return;
       const t = data?.constructor?.name;
-      if (t === 'Blob' || t === 'ArrayBuffer') rtcReceivedChunks.push(data);
+      if (t === 'Blob' || t === 'ArrayBuffer') rtcReceiver.push(data);
     }catch(e){
       recvError.textContent = `Erreur RTC : ${e.message}`;
       console.error(e);
@@ -2234,6 +1787,47 @@ function showLocalImage(url){
   emitterCard.classList.add('hidden');
   deactivate();
   if (!window.__nickname) window.__nickname = userNick;
+
+  // Témoin de bon chargement, relevé par le garde-fou ci-dessous.
+  window.__castunnReady = true;
+
+  // Temps de démarrage, visible dans la console de l'application : sans repère
+  // chiffré, une lenteur ressentie ne peut pas être diagnostiquée.
+  {
+    const t = Math.round(performance.now());
+    window.__castunnStartupMs = t;
+    addConsole(`[démarrage] interface prête en ${t} ms`);
+  }
+  </script>
+
+  <script>
+  /* Garde-fou (script classique, donc toujours exécuté) : si le module ne
+     s'est pas chargé, l'interface reste inerte — onglets morts, cartes
+     superposées — sans que rien n'explique pourquoi. C'est le cas quand la
+     page est ouverte directement dans Firefox, qui refuse les modules ES en
+     file:// (origine opaque). Castunn est prévu pour tourner dans son
+     application ; on le dit clairement plutôt que d'afficher un écran cassé. */
+  setTimeout(function () {
+    if (window.__castunnReady) return;
+
+    var bandeau = document.createElement('div');
+    bandeau.setAttribute('role', 'alert');
+    bandeau.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:9999',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'padding:24px', 'background:#11111b', 'color:#cdd6f4',
+      'font:15px/1.6 system-ui,sans-serif', 'text-align:center'
+    ].join(';');
+    bandeau.innerHTML =
+      '<div style="max-width:520px">' +
+      '<h2 style="margin:0 0 12px;font-size:19px">Castunn n’a pas pu démarrer</h2>' +
+      '<p style="margin:0 0 10px">Cette page utilise des modules JavaScript que ce navigateur refuse ' +
+      'de charger depuis un fichier local.</p>' +
+      '<p style="margin:0;color:#a6adc8">Lancez Castunn depuis son application. ' +
+      'Le détail figure dans la console du navigateur.</p>' +
+      '</div>';
+    document.body.appendChild(bandeau);
+  }, 2000);
   </script>
 </body>
 </html>

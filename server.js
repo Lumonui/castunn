@@ -2,6 +2,7 @@
 // HTTP + WS pour Render + Signalisation WebRTC + Fallback binaire existant
 
 const http = require('http');
+const os = require('os');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 
@@ -10,6 +11,18 @@ const app = express();
 // Petit endpoint santé (utile pour Render)
 app.get('/', (_req, res) => {
   res.status(200).send('OK');
+});
+
+// Signature de découverte : permet aux clients de scanner le réseau local
+// et de reconnaître un vrai serveur Castunn (et pas n'importe quel service
+// qui traîne sur le port 8080).
+app.get('/castunn', (_req, res) => {
+  res.status(200).json({
+    app: 'castunn',
+    role: 'signal',
+    version: 1,
+    ws: true
+  });
 });
 
 const server = http.createServer(app);
@@ -22,6 +35,65 @@ const rooms = new Map();   // room -> Set<ws>
 
 // Génère un ID simple si le client n’en fournit pas
 const makeId = () => Math.random().toString(36).slice(2, 10);
+
+/**
+ * Normalise une adresse socket :
+ *  - "::ffff:192.168.1.20" -> "192.168.1.20"
+ *  - loopback ("::1", "127.0.0.1") -> null, car derrière un reverse proxy
+ *    (alwaysdata, Render, nginx...) c'est l'adresse du proxy, pas celle du client.
+ */
+function normalizeIp(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  let ip = raw.trim();
+  if (!ip) return null;
+  if (ip.startsWith('::ffff:')) ip = ip.slice(7);
+  if (ip === '::1' || ip === '127.0.0.1' || ip === '0.0.0.0' || ip === '::') return null;
+  return ip;
+}
+
+// En-têtes posés par les reverse proxies courants, du plus standard au plus
+// spécifique. Tous les hébergeurs ne posent pas le même, et certains n'en
+// posent aucun sur la requête d'upgrade WebSocket.
+const FORWARD_HEADERS = [
+  'x-forwarded-for',
+  'x-real-ip',
+  'cf-connecting-ip',      // Cloudflare
+  'true-client-ip',
+  'x-client-ip',
+  'x-cluster-client-ip'
+];
+
+/** Adresse client la plus fiable disponible côté serveur. */
+function clientIpFromRequest(req) {
+  for (const h of FORWARD_HEADERS) {
+    const found = String(req.headers[h] || '')
+      .split(',')
+      .map(s => normalizeIp(s))
+      .find(Boolean);
+    if (found) return found;
+  }
+
+  // En-tête standardisé (RFC 7239) : Forwarded: for=1.2.3.4;proto=https
+  const forwarded = String(req.headers['forwarded'] || '');
+  const m = /for=(?:"?\[?)([^;,\]"]+)/i.exec(forwarded);
+  if (m) {
+    const ip = normalizeIp(m[1].replace(/:\d+$/, ''));
+    if (ip) return ip;
+  }
+
+  return normalizeIp(req.socket.remoteAddress);
+}
+
+/** Liste des adresses IPv4 locales (affichées au démarrage, pratique en LAN). */
+function localIPv4s() {
+  const out = [];
+  for (const addrs of Object.values(os.networkInterfaces())) {
+    for (const a of addrs || []) {
+      if (a.family === 'IPv4' && !a.internal) out.push(a.address);
+    }
+  }
+  return out;
+}
 
 // Outils
 function roomOf(ws) {
@@ -92,12 +164,22 @@ wss.on('connection', (ws, req) => {
   clients.set(ws, { id, room: null, awaitingBinaryMeta: null, blobAnnounced: false, isAlive: true });
   byId.set(id, ws);
 
+  // IP vue par le serveur : IP LAN en direct, IP publique derrière un proxy.
+  // null si on ne voit que du loopback (reverse proxy sans X-Forwarded-For) :
+  // dans ce cas on attend que le client annonce lui-même son IP (join/announce).
+  const ip = clientIpFromRequest(req);
+  ws.__ip = ip || '';
+  ws.__ipTrusted = !!ip; // une IP annoncée par le client ne doit pas écraser celle-ci
+
   // Accuse réception
   ws.send(JSON.stringify({ type: 'hello', peerId: id }));
-  
-  const ip = (req.headers['x-forwarded-for'] || '').split(',')[0].trim() || req.socket.remoteAddress;
-  ws.__ip = ip;
-  console.log(`[WS] + Client connecté id=${ws.__id} ip=${ip}`);
+
+  console.log(`[WS] + Client connecté id=${ws.__id} ip=${ip || '(inconnue)'}`);
+  if (!ip) {
+    // Diagnostic : derrière quel proxy sommes-nous, et que pose-t-il ?
+    const seen = Object.keys(req.headers).filter(h => /forward|client-ip|real-ip/i.test(h));
+    console.log(`[WS]   pas d'IP côté serveur (socket=${req.socket.remoteAddress}) ; en-têtes de proxy vus : ${seen.length ? seen.join(', ') : 'aucun'} — on attendra celle annoncée par le client.`);
+  }
 
   ws.on('pong', () => {
     const meta = clients.get(ws);
@@ -190,10 +272,24 @@ wss.on('connection', (ws, req) => {
       // --- Présence / rooms ---
       case 'join': {
 		const room = String(data.room || 'default');
-		// AJOUT : mémoriser le nick et l'IP publique envoyée par le client
+		// Mémorise le nick, et l'IP annoncée par le client SEULEMENT si le serveur
+		// n'a pas pu déterminer une IP fiable (cas du reverse proxy → "::1").
 		if (data.nick) ws.__nick = data.nick;
-		if (data.ip)   ws.__ip   = data.ip;   // préférer l'IP publique connue du client
+		if (!ws.__ipTrusted && data.ip) ws.__ip = String(data.ip);
 		joinRoom(ws, room);
+		break;
+	  }
+
+      // --- Annonce d'identité (IP publique récupérée tardivement, pseudo modifié) ---
+      case 'announce': {
+		if (typeof data.nick === 'string') ws.__nick = data.nick;
+		if (!ws.__ipTrusted && data.ip) ws.__ip = String(data.ip);
+		const room = roomOf(ws);
+		const out = JSON.stringify({
+		  type: 'announce', from: meta.id, ip: ws.__ip || '', nick: ws.__nick || ''
+		});
+		if (room) broadcastToRoom(room, out, ws);
+		else wss.clients.forEach((c) => c !== ws && c.readyState === WebSocket.OPEN && c.send(out));
 		break;
 	  }
       case 'leave': {
@@ -305,6 +401,15 @@ wss.on('connection', (ws, req) => {
 });
 
 const PORT = process.env.PORT || 8080;
+// Pas d'hôte précisé => écoute sur toutes les interfaces (LAN inclus).
 server.listen(PORT, () => {
   console.log(`Serveur HTTP+WS prêt sur : ${PORT}`);
+  for (const addr of localIPv4s()) {
+    console.log(`[LAN] joignable sur ws://${addr}:${PORT}`);
+  }
+});
+
+server.on('error', (err) => {
+  console.error(`[FATAL] Impossible d'écouter sur le port ${PORT} : ${err.code || err.message}`);
+  process.exit(1);
 });

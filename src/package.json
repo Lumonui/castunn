@@ -1,0 +1,4 @@
+{
+  "//": "Marque src/ comme du JavaScript à modules ES, pour Node (tests) comme pour le navigateur.",
+  "type": "module"
+}
