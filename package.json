@@ -10,17 +10,22 @@
     "test:unit": "node test/unit.test.mjs",
     "test:ui": "electron test/renderer.test.js",
     "test:main": "electron test/main.test.js",
-    "test:all": "npm run test:unit && npm test && npm run test:ui && npm run test:main",
-    "dist": "electron-builder -w"
+    "test:all": "npm run test:unit && npm run test:nat && npm test && npm run test:ui && npm run test:rtc && npm run test:mesh && npm run test:turn && npm run test:main",
+    "dist": "electron-builder -w",
+    "test:rtc": "electron test/rtc.test.js",
+    "test:nat": "node test/nat.test.js",
+    "test:turn": "electron test/turn.test.js",
+    "test:mesh": "electron test/mesh.test.js"
   },
   "dependencies": {
+    "electron-updater": "^6.3.0",
     "express": "^4.19.0",
-    "ws": "^8.16.0",
-    "electron-updater": "^6.3.0"
+    "ws": "^8.16.0"
   },
   "devDependencies": {
-    "electron": "^31.0.0",
-    "electron-builder": "^24.13.3"
+    "electron": "^44.7.2",
+    "electron-builder": "^26.15.3",
+    "node-turn": "^0.0.6"
   },
   "build": {
     "appId": "com.lumonui.castunn",
@@ -28,14 +33,19 @@
     "files": [
       "**/*",
       "!test/**",
-      "!.github/**"
+      "!.github/**",
+      "!CLAUDE.md",
+      "!consignes_turn.txt",
+      "!docs/**"
     ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.ico"
     },
     "linux": {
-      "target": ["AppImage"],
+      "target": [
+        "AppImage"
+      ],
       "icon": "assets/icon.png",
       "category": "Utility"
     },
@@ -61,6 +71,6 @@
     ]
   },
   "allowScripts": {
-    "electron@31.7.7": true
+    "electron@44.7.2": true
   }
 }

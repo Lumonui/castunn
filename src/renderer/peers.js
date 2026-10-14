@@ -2,20 +2,27 @@
 // Registre des pairs connectés : qui est là, sous quelle identité.
 // Aucune dépendance au DOM — l'affichage est branché par l'appelant.
 
-import { cleanPeerIp, formatPeerLabel } from './protocol.js';
+import { cleanPeerIp, formatPeerLabel, formatPeerDetail, formatPeerAltAddress }
+  from './protocol.js';
 
 export function createPeerRegistry({ onChange = () => {} } = {}) {
-  const peers = new Map(); // peerId -> { ip, nick }
+  const peers = new Map(); // peerId -> { ip, ipDeclared, nick }
 
   /** Fusionne une identité partielle sans écraser ce qu'on savait déjà. */
   function merge(peerId, info = {}) {
     if (!peerId) return false;
-    const prev = peers.get(peerId) || { ip: '', nick: '' };
+    const prev = peers.get(peerId) || { ip: '', ipDeclared: '', nick: '' };
     const next = {
       ip: cleanPeerIp(info.ip) || prev.ip || '',
+      // Adresse que le pair annonce lui-même : elle complète celle que le
+      // serveur constate, sans jamais la remplacer.
+      ipDeclared: cleanPeerIp(info.ipDeclared) || prev.ipDeclared || '',
       nick: String(info.nick || '').trim() || prev.nick || ''
     };
-    const changed = !peers.has(peerId) || next.ip !== prev.ip || next.nick !== prev.nick;
+    const changed = !peers.has(peerId)
+      || next.ip !== prev.ip
+      || next.ipDeclared !== prev.ipDeclared
+      || next.nick !== prev.nick;
     peers.set(peerId, next);
     if (changed) onChange();
     return changed;
@@ -53,9 +60,19 @@ export function createPeerRegistry({ onChange = () => {} } = {}) {
       return formatPeerLabel(peerId, info || peers.get(peerId) || {});
     },
 
-    /** Liste des étiquettes, pour l'infobulle. */
+    /** Liste des étiquettes courtes. */
     labels() {
       return [...peers.entries()].map(([id, info]) => formatPeerLabel(id, info));
+    },
+
+    /** Idem, mais avec l'adresse secondaire : pour l'infobulle du compteur. */
+    details() {
+      return [...peers.entries()].map(([id, info]) => formatPeerDetail(id, info));
+    },
+
+    /** Mention de l'adresse secondaire d'un pair, ou '' s'il n'en a qu'une. */
+    altAddress(peerId) {
+      return formatPeerAltAddress(peers.get(peerId) || {});
     },
 
     ids() { return [...peers.keys()]; }

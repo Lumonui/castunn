@@ -3,6 +3,7 @@
 
 const http = require('http');
 const os = require('os');
+const crypto = require('crypto');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 
@@ -32,6 +33,54 @@ const wss = new WebSocketServer({ noServer: true });
 const clients = new Map(); // ws -> { id, room, awaitingBinaryMeta, blobAnnounced, isAlive }
 const byId = new Map();    // id -> ws
 const rooms = new Map();   // room -> Set<ws>
+
+/* ==========================================================================
+ * Relais TURN (facultatif)
+ *
+ * Quand la connexion directe échoue (NAT symétrique, 4G, réseau
+ * d'entreprise…), un relais TURN fait transiter le flux. Ce serveur n'en
+ * héberge pas : il distribue des identifiants temporaires pour celui qu'on
+ * lui indique.
+ *
+ *   TURN_URLS    liste séparée par des virgules, par exemple
+ *                turn:turn.exemple.fr:3478?transport=udp,
+ *                turns:turn.exemple.fr:443?transport=tcp
+ *   TURN_SECRET  secret partagé avec coturn (static-auth-secret) ou eturnal
+ *   TURN_TTL     validité des identifiants, en secondes (6 h par défaut)
+ *
+ * Mécanisme « TURN REST API » : username = "<expiration>:<peerId>",
+ * credential = base64(HMAC-SHA1(secret, username)). Le relais refait le
+ * calcul de son côté : le secret ne quitte jamais ce serveur, et des
+ * identifiants interceptés expirent seuls.
+ *
+ * Sans TURN_URLS ET TURN_SECRET, rien n'est annoncé — c'est le cas du
+ * serveur local du réseau domestique, où un relais ne servirait à rien.
+ *
+ * Un Cloudflare Worker ne peut pas héberger de TURN (pas d'UDP). Pour en
+ * servir un depuis un Worker, il faudrait un service TURN managé dont le
+ * Worker obtiendrait les identifiants par API : non implémenté, mais le
+ * format envoyé au client (iceServers, iceExpiresAt) serait le même.
+ * ========================================================================== */
+const TURN_URLS_BRUTES = String(process.env.TURN_URLS || '')
+  .split(',').map((u) => u.trim()).filter(Boolean);
+const TURN_URLS = TURN_URLS_BRUTES.filter((u) => /^turns?:\S+$/i.test(u));
+const TURN_SECRET = String(process.env.TURN_SECRET || '');
+// Bornée : des identifiants valables des jours rendraient le vol rentable,
+// et une durée trop courte casserait les sessions en cours.
+const TURN_TTL = Math.min(Math.max(Number(process.env.TURN_TTL) || 6 * 3600, 300), 48 * 3600);
+const TURN_ACTIF = TURN_URLS.length > 0 && TURN_SECRET.length > 0;
+
+/** Identifiants TURN temporaires pour un pair, ou null sans relais configuré. */
+function configIce(peerId) {
+  if (!TURN_ACTIF) return null;
+  const expiration = Math.floor(Date.now() / 1000) + TURN_TTL;
+  const username = `${expiration}:${peerId}`;
+  const credential = crypto.createHmac('sha1', TURN_SECRET).update(username).digest('base64');
+  return {
+    iceServers: [{ urls: TURN_URLS, username, credential }],
+    iceExpiresAt: expiration * 1000
+  };
+}
 
 // Génère un ID simple si le client n’en fournit pas
 const makeId = () => Math.random().toString(36).slice(2, 10);
@@ -108,6 +157,43 @@ function broadcastToRoom(room, data, excludeWs, forceBinary = false) {
     }
   });
 }
+/**
+ * Pairs désignés par `to` (un identifiant ou une liste), limités à la room
+ * de l'émetteur : un message adressé ne doit jamais franchir une room.
+ */
+function destinataires(ws, to) {
+  const room = roomOf(ws);
+  if (!room) return [];
+  const ids = (Array.isArray(to) ? to : [to]).map(String);
+  return ids
+    .map((id) => byId.get(id))
+    .filter((c) => c && c !== ws && c.readyState === WebSocket.OPEN && roomOf(c) === room);
+}
+
+/**
+ * Envoi binaire relayé, signé de son émetteur pour les clients qui l’ont
+ * demandé : [0xCA, longueur, identifiant ASCII…, données]. Sans signature,
+ * deux envois simultanés par le WebSocket se mélangeaient chez le
+ * récepteur, sans moyen de les démêler. Un client ancien, qui ne l’a pas
+ * demandé, reçoit les données brutes comme avant.
+ */
+function relayerBinaire(c, payload, emetteurId) {
+  if (!c.__binaireSigne) { c.send(payload, { binary: true }); return; }
+  const id = Buffer.from(String(emetteurId), 'ascii');
+  c.send(Buffer.concat([Buffer.from([0xCA, id.length]), id, payload]), { binary: true });
+}
+
+// Ce que ce serveur sait faire en plus du protocole d’origine. Un client
+// récent s’y adapte, un ancien ignore le champ.
+const CAPACITES = ['adressage', 'binaire-signe'];
+
+// Types que le serveur traite lui-même : jamais routés par `to` génériquement.
+const TYPES_SERVEUR = new Set([
+  'join', 'announce', 'leave', 'ice-config', 'chat',
+  'offer', 'answer', 'ice', 'ping', 'pong',
+  'binary-meta', 'binary-end', 'binary-cancel'
+]);
+
 function sendToId(id, data) {
   const target = byId.get(id);
   if (target && target.readyState === WebSocket.OPEN) target.send(data);
@@ -127,7 +213,8 @@ function joinRoom(ws, room) {
   // Informe la room de la présence
   broadcastToRoom(room, JSON.stringify({
     type: 'presence', action: 'join',
-    peerId: meta.id, ip: ws.__ip, nick: ws.__nick || ''
+    peerId: meta.id, ip: ws.__ip, ipDeclared: ws.__ipDeclared || '',
+    nick: ws.__nick || ''
   }), ws);
   // Liste des pairs déjà présents
   const peers = [...rooms.get(room)]
@@ -170,9 +257,15 @@ wss.on('connection', (ws, req) => {
   const ip = clientIpFromRequest(req);
   ws.__ip = ip || '';
   ws.__ipTrusted = !!ip; // une IP annoncée par le client ne doit pas écraser celle-ci
+  // Adresse que le client dit avoir. Elle ne remplace jamais `__ip` (elle est
+  // déclarative, donc falsifiable), mais elle est relayée telle quelle : un pair
+  // arrivé en IPv6 annonce son IPv4, et les interfaces préfèrent montrer celle-ci.
+  ws.__ipDeclared = '';
 
   // Accuse réception
-  ws.send(JSON.stringify({ type: 'hello', peerId: id }));
+  // Le relais TURN voyage avec le hello : le client le connaît avant même
+  // d'entrer dans la room, donc avant toute connexion à établir.
+  ws.send(JSON.stringify({ type: 'hello', peerId: id, capacites: CAPACITES, ...(configIce(id) || {}) }));
 
   console.log(`[WS] + Client connecté id=${ws.__id} ip=${ip || '(inconnue)'}`);
   if (!ip) {
@@ -196,10 +289,13 @@ wss.on('connection', (ws, req) => {
     if (isBinary) {
       const room = roomOf(ws);
       const payload = message; // Buffer
+      // Envoi adressé (maillage) : seulement aux pairs que le P2P ne dessert pas.
+      const cibles = meta.awaitingBinaryMeta?.to ? destinataires(ws, meta.awaitingBinaryMeta.to) : null;
       // Si un méta binaire a été annoncé, l'envoyer d'abord (une seule fois)
       if (meta.awaitingBinaryMeta && !meta.blobAnnounced) {
 	    const announce = JSON.stringify({
 		  type: 'binary-meta',
+		  from: meta.id,  // le récepteur range le transfert par émetteur
 		  filename: meta.awaitingBinaryMeta.filename,  // <- clé normalisée
 		  size: meta.awaitingBinaryMeta.size,
 		  mime: meta.awaitingBinaryMeta.mime,
@@ -207,7 +303,8 @@ wss.on('connection', (ws, req) => {
 		  fileId: meta.awaitingBinaryMeta.fileId,
 		  offset: meta.awaitingBinaryMeta.offset
 	  });
-	  if (room) broadcastToRoom(room, announce, ws);
+	  if (cibles) cibles.forEach((c) => c.send(announce));
+	  else if (room) broadcastToRoom(room, announce, ws);
 	  else {
 		wss.clients.forEach((c) => {
 		  if (c !== ws && c.readyState === WebSocket.OPEN) c.send(announce);
@@ -217,8 +314,12 @@ wss.on('connection', (ws, req) => {
 	  clients.set(ws, meta);
         console.log('[BINAIRE] Annonce envoyée');
       }
-      if (room) {
-		  broadcastToRoom(room, payload, ws, /*forceBinary=*/true); // ✅
+      if (cibles) {
+        cibles.forEach((c) => relayerBinaire(c, payload, meta.id));
+      } else if (room) {
+        wss.clients.forEach((c) => {
+          if (c !== ws && c.readyState === WebSocket.OPEN && roomOf(c) === room) relayerBinaire(c, payload, meta.id);
+        });
 		} else {
 		  wss.clients.forEach((c) => {
 			if (c !== ws && c.readyState === WebSocket.OPEN) c.send(payload, { binary: true }); // déjà ok
@@ -239,8 +340,16 @@ wss.on('connection', (ws, req) => {
       return;
     }
 
-    // Ajoute l’id émetteur si absent
-    if (!data.from) data.from = meta.id;
+    // L'émetteur est celui de la socket, jamais celui que le message prétend :
+    // sinon n’importe qui pourrait envoyer un « stop » au nom d’un autre.
+    data.from = meta.id;
+
+    // Message applicatif adressé (maillage) : seulement aux pairs désignés.
+    if (data.to !== undefined && data.to !== null && !TYPES_SERVEUR.has(data.type)) {
+      const out = JSON.stringify(data);
+      destinataires(ws, data.to).forEach((c) => c.send(out));
+      return;
+    }
 
     switch (data.type) {
       // --- Gestion "app" existante ---
@@ -252,19 +361,25 @@ wss.on('connection', (ws, req) => {
 			kind: data.kind || 'file',
 			fileId: data.fileId,
 			offset: data.offset || 0,
+			// Destinataires de l’envoi (maillage) ; null = toute la room, comme avant.
+			to: (data.to === undefined || data.to === null) ? null
+			  : (Array.isArray(data.to) ? data.to : [data.to]).map(String),
 		  };
 		  meta.blobAnnounced = false;
 		  clients.set(ws, meta);
 		  break;
 	  }
-      case 'binary-end': {
-        // Fin d’un envoi binaire
+      case 'binary-end':
+      case 'binary-cancel': {
+        // Fin ou annulation d’un envoi : aux mêmes destinataires que lui.
+        const cibles = meta.awaitingBinaryMeta?.to ? destinataires(ws, meta.awaitingBinaryMeta.to) : null;
         meta.awaitingBinaryMeta = null;
         meta.blobAnnounced = false;
         clients.set(ws, meta);
         const room = roomOf(ws);
-        const endMsg = JSON.stringify({ type: 'binary-end', fileId: data.fileId });
-        if (room) broadcastToRoom(room, endMsg, ws);
+        const endMsg = JSON.stringify({ type: data.type, fileId: data.fileId, from: meta.id });
+        if (cibles) cibles.forEach((c) => c.send(endMsg));
+        else if (room) broadcastToRoom(room, endMsg, ws);
         else wss.clients.forEach((c) => c !== ws && c.readyState === WebSocket.OPEN && c.send(endMsg));
         break;
       }
@@ -275,6 +390,9 @@ wss.on('connection', (ws, req) => {
 		// Mémorise le nick, et l'IP annoncée par le client SEULEMENT si le serveur
 		// n'a pas pu déterminer une IP fiable (cas du reverse proxy → "::1").
 		if (data.nick) ws.__nick = data.nick;
+		// Un client récent demande les envois binaires signés de leur émetteur.
+		ws.__binaireSigne = Array.isArray(data.capacites) && data.capacites.includes('binaire-signe');
+		if (data.ip) ws.__ipDeclared = normalizeIp(String(data.ip)) || '';
 		if (!ws.__ipTrusted && data.ip) ws.__ip = String(data.ip);
 		joinRoom(ws, room);
 		break;
@@ -283,10 +401,12 @@ wss.on('connection', (ws, req) => {
       // --- Annonce d'identité (IP publique récupérée tardivement, pseudo modifié) ---
       case 'announce': {
 		if (typeof data.nick === 'string') ws.__nick = data.nick;
+		if (data.ip) ws.__ipDeclared = normalizeIp(String(data.ip)) || '';
 		if (!ws.__ipTrusted && data.ip) ws.__ip = String(data.ip);
 		const room = roomOf(ws);
 		const out = JSON.stringify({
-		  type: 'announce', from: meta.id, ip: ws.__ip || '', nick: ws.__nick || ''
+		  type: 'announce', from: meta.id, ip: ws.__ip || '',
+		  ipDeclared: ws.__ipDeclared || '', nick: ws.__nick || ''
 		});
 		if (room) broadcastToRoom(room, out, ws);
 		else wss.clients.forEach((c) => c !== ws && c.readyState === WebSocket.OPEN && c.send(out));
@@ -300,7 +420,8 @@ wss.on('connection', (ws, req) => {
 			if (rooms.get(room).size === 0) rooms.delete(room);
 			broadcastToRoom(room, JSON.stringify({
 			  type: 'presence', action: 'leave',
-			  peerId: meta.id, ip: ip, nick: ws.__nick || ''
+			  peerId: meta.id, ip: ip, ipDeclared: ws.__ipDeclared || '',
+			  nick: ws.__nick || ''
 			}), ws);
 		  }
 		  clients.set(ws, { ...meta, room: null });
@@ -358,6 +479,18 @@ wss.on('connection', (ws, req) => {
 		  break;
 	  }
 
+	  // --- Identifiants TURN neufs : ceux du hello expirent sur une longue session ---
+	  case 'ice-config': {
+		// Toujours répondu à l’émetteur seul, jamais relayé à la room.
+		const maintenant = Date.now();
+		// Le calcul est bon marché, mais un client modifié pourrait marteler :
+		// une demande toutes les 10 s suffit largement à un usage normal.
+		if (maintenant - (ws.__iceConfigAt || 0) < 10000) break;
+		ws.__iceConfigAt = maintenant;
+		ws.send(JSON.stringify({ type: 'ice-config', ...(configIce(meta.id) || { iceServers: [], iceExpiresAt: null }) }));
+		break;
+	  }
+
 	  case 'pong': {
 		  // router au destinataire (champ "to")
 		  if (data.to) sendToId(data.to, JSON.stringify({ ...data, from: meta.id }));
@@ -391,7 +524,8 @@ wss.on('connection', (ws, req) => {
 		if (rooms.get(room).size === 0) rooms.delete(room);
 		broadcastToRoom(room, JSON.stringify({
 		  type: 'presence', action: 'leave',
-		  peerId: meta.id, ip: ip, nick: ws.__nick || ''
+		  peerId: meta.id, ip: ip, ipDeclared: ws.__ipDeclared || '',
+		  nick: ws.__nick || ''
 		  }), ws);
 	  }
 	  clients.delete(ws);
@@ -406,6 +540,16 @@ server.listen(PORT, () => {
   console.log(`Serveur HTTP+WS prêt sur : ${PORT}`);
   for (const addr of localIPv4s()) {
     console.log(`[LAN] joignable sur ws://${addr}:${PORT}`);
+  }
+  // Une configuration à moitié faite ne doit pas échouer en silence.
+  const ignorees = TURN_URLS_BRUTES.filter((u) => !TURN_URLS.includes(u));
+  if (ignorees.length) console.warn(`[TURN] URL ignorée(s), ni turn: ni turns: : ${ignorees.join(', ')}`);
+  if (TURN_ACTIF) {
+    console.log(`[TURN] relais annoncé aux clients : ${TURN_URLS.join(', ')} (identifiants valables ${TURN_TTL} s)`);
+  } else if (TURN_URLS.length && !TURN_SECRET) {
+    console.warn('[TURN] TURN_URLS sans TURN_SECRET : aucun relais annoncé.');
+  } else if (TURN_SECRET && !TURN_URLS.length) {
+    console.warn('[TURN] TURN_SECRET sans URL valable : aucun relais annoncé.');
   }
 });
 

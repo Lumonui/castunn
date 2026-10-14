@@ -1,0 +1,281 @@
+// test/mesh.test.js
+// Maillage : trois et quatre vraies pages Castunn, un vrai serveur, de vraies
+// connexions WebRTC entre chaque paire.
+//
+//   npm run test:mesh
+//
+// Rejoue les scénarios qui motivaient le maillage : à trois, chacun en P2P
+// avec chacun (K3) ; deux émetteurs à la fois, une vignette chacun ; le
+// « stop » de A n'arrête que ce qui vient de A ; un pair sans P2P servi par
+// le WebSocket sans doublon chez les autres.
+
+const path = require('path');
+const { app, BrowserWindow } = require('electron');
+const { startServer, connect, joinRoom } = require('./helpers');
+
+const PORT = Number(process.env.TEST_MESH_PORT || 8093);
+const PROJECT = path.join(__dirname, '..');
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+async function waitUntil(fn, { timeout = 15000, interval = 200, label = 'condition' } = {}) {
+  const t0 = Date.now();
+  while (Date.now() - t0 < timeout) {
+    const v = await fn();
+    if (v) return v;
+    await sleep(interval);
+  }
+  throw new Error(`"${label}" jamais atteint après ${timeout} ms`);
+}
+
+const results = [];
+const pages = []; // { nom, win }
+async function check(nom, fn) {
+  try { await fn(); results.push(true); console.log(`  ok   ${nom}`); }
+  catch (e) {
+    results.push(false);
+    console.log(`  FAIL ${nom}\n       ${e.message}`);
+    for (const p of pages) {
+      try {
+        const etat = await js(p, `({ rtc: document.getElementById('rtcStatus').textContent,
+          console: document.getElementById('consoleLog').textContent.split('\\n').filter(Boolean).slice(-5).join(' | ') })`);
+        console.log(`       ${p.nom} — RTC ${etat.rtc} — ${etat.console}`);
+      } catch { /* fermée */ }
+    }
+  }
+}
+
+// Les pages se ferment entre deux scénarios : sans cet écouteur, Electron
+// quitterait de lui-même, en silence et avec le code 0.
+app.on('window-all-closed', () => {});
+
+const js = (p, code, geste = false) => p.win.webContents.executeJavaScript(code, geste);
+const consoleDe = (p) => js(p, 'document.getElementById("consoleLog").textContent');
+const pastille = (p) => js(p, `({ texte: document.getElementById('rtcStatus').textContent,
+  classes: document.getElementById('rtcStatus').className, titre: document.getElementById('rtcStatus').title })`);
+const vignettes = (p) => js(p, `[...document.querySelectorAll('#receptions .tuile')].map((t) => ({
+  de: t.dataset.de, titre: t.querySelector('figcaption').textContent,
+  image: t.querySelector('.tuile-image').getAttribute('src') || '',
+  audio: t.querySelector('.tuile-audio').getAttribute('src') || '' }))`);
+
+async function ouvrirPage(nom, query = {}) {
+  const win = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true, nodeIntegration: false } });
+  const p = { nom, win };
+  pages.push(p);
+  await win.loadFile(path.join(PROJECT, 'castunn.html'), { query });
+  await win.webContents.executeJavaScript(`localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT}'); true`);
+  await win.webContents.reload();
+  await new Promise((r) => win.webContents.once('did-finish-load', r));
+  await win.webContents.executeJavaScript(`window.__nickname = ${JSON.stringify(nom)}; true`);
+  await waitUntil(async () => (await js(p, 'document.getElementById("wsStatus").textContent')) === 'Connecté',
+    { label: `${nom} connecté au serveur` });
+  // Récepteur activé, comme le ferait l'utilisateur.
+  await js(p, 'document.getElementById("btnActivate").click(); true');
+  p.id = await js(p, `(document.getElementById('consoleLog').textContent.match(/myId=([a-z0-9]+)/) || [])[1]`);
+  return p;
+}
+const fermerPages = () => { for (const p of pages.splice(0)) { try { p.win.destroy(); } catch {} } };
+const fermerPage = (p) => { pages.splice(pages.indexOf(p), 1); try { p.win.destroy(); } catch {} };
+
+/**
+ * Une page qui doit mener : rouverte jusqu'à obtenir un identifiant qui
+ * commence au-delà de « k ». Un identifiant tout petit rendrait presque
+ * impossible de trouver un autre pair en dessous.
+ */
+async function ouvrirMeneur(nom) {
+  for (let essai = 0; essai < 20; essai++) {
+    const p = await ouvrirPage(nom);
+    if (p.id >= 'k') return p;
+    fermerPage(p);
+  }
+  throw new Error('aucun identifiant assez grand en 20 essais');
+}
+
+async function envoyerUrl(p, type, url) {
+  await js(p, `document.getElementById('${type}Url').value = ${JSON.stringify(url)};
+    document.getElementById('btnSend${type[0].toUpperCase() + type.slice(1)}Url').click(); true`);
+}
+const compter = (texte, motif) => (texte.match(motif) || []).length;
+
+app.whenReady().then(async () => {
+  let serveur;
+  try { serveur = await startServer(PORT, { env: { TURN_URLS: null, TURN_SECRET: null } }); }
+  catch (e) { console.error(`Serveur de test impossible sur ${PORT} : ${e.message}`); app.exit(1); return; }
+
+  console.log('\nMaillage (trois et quatre pages)\n');
+
+  /* --- 1. K3 : chacun en P2P avec chacun ------------------------------------ */
+  const a = await ouvrirPage('alice');
+  const b = await ouvrirPage('bob');
+  const c = await ouvrirPage('carol');
+
+  await check('à trois, chaque page a deux liens P2P ouverts (K3)', async () => {
+    for (const p of [a, b, c]) {
+      const e = await waitUntil(async () => { const s = await pastille(p); return s.texte === '2/2' ? s : null; },
+        { label: `${p.nom} : pastille 2/2`, timeout: 20000 });
+      if (!/\bok\b/.test(e.classes)) throw new Error(`${p.nom} : classes ${e.classes}`);
+      const lignes = e.titre.split('\n');
+      if (lignes.length !== 2 || !lignes.every((l) => / : direct/.test(l))) throw new Error(`${p.nom} : infobulle ${e.titre}`);
+    }
+  });
+
+  await check('une URL envoyée par A atteint B et C, chacun par son lien P2P', async () => {
+    await envoyerUrl(a, 'audio', 'https://example.invalid/k3.mp3');
+    await waitUntil(async () => compter(await consoleDe(a), /a reçu l'audio \(URL via RTC\)/g) >= 2,
+      { label: 'deux accusés de réception P2P' });
+    const log = await consoleDe(a);
+    if (/a reçu l'audio \(URL via WS\)/.test(log)) throw new Error('un pair a été servi par le WebSocket');
+    for (const p of [b, c]) {
+      const v = await vignettes(p);
+      if (!v.some((t) => t.de === a.id && t.audio.includes('k3.mp3'))) throw new Error(`${p.nom} : vignette de A absente`);
+    }
+  });
+
+  await check('deux émetteurs à la fois : une vignette chacun, titrée de son nom', async () => {
+    await envoyerUrl(b, 'image', 'https://example.invalid/de-bob.png');
+    await envoyerUrl(c, 'image', 'https://example.invalid/de-carol.png');
+    const v = await waitUntil(async () => {
+      const t = await vignettes(a);
+      return t.some((x) => x.image.includes('de-bob')) && t.some((x) => x.image.includes('de-carol')) ? t : null;
+    }, { label: 'deux vignettes chez A' });
+    const deBob = v.find((x) => x.image.includes('de-bob'));
+    const deCarol = v.find((x) => x.image.includes('de-carol'));
+    if (deBob.de !== b.id || deCarol.de !== c.id) throw new Error('vignettes mal attribuées : ' + JSON.stringify(v));
+    if (!deBob.titre.includes('bob') || !deCarol.titre.includes('carol')) throw new Error('titres : ' + JSON.stringify(v));
+    const plusieurs = await js(a, 'document.getElementById("receptions").classList.contains("plusieurs")');
+    if (!plusieurs) throw new Error('la grille à plusieurs vignettes n’est pas activée');
+  });
+
+  // Point 3 du planning : A et B diffusent tous deux chez C ; le stop de A
+  // ne doit couper que ce qui vient de A.
+  await check('le « stop » de A n’arrête que ce qui vient de A', async () => {
+    await envoyerUrl(a, 'image', 'https://example.invalid/de-alice.png');
+    await waitUntil(async () => (await vignettes(c)).some((t) => t.de === a.id && t.image.includes('de-alice')),
+      { label: 'vignette de A chez C' });
+    await js(a, 'document.getElementById("btnStop").click(); true');
+    await waitUntil(async () => !(await vignettes(c)).some((t) => t.de === a.id), { label: 'vignette de A retirée chez C' });
+    const reste = await vignettes(c);
+    if (!reste.some((t) => t.de === b.id && t.image.includes('de-bob'))) {
+      throw new Error('la vignette de B a été coupée par le stop de A : ' + JSON.stringify(reste));
+    }
+  });
+
+  await check('un départ ferme son lien ; la pastille revient au cas à deux', async () => {
+    const idC = c.id;
+    pages.splice(pages.indexOf(c), 1);
+    c.win.destroy();
+    for (const p of [a, b]) {
+      await waitUntil(async () => (await pastille(p)).texte === 'Connecté', { label: `${p.nom} : retour à « Connecté »` });
+      const log = await consoleDe(p);
+      if (!log.includes(`fermé : départ du pair`)) throw new Error(`${p.nom} : fermeture du lien non journalisée`);
+      const v = await vignettes(p);
+      if (!v.some((t) => t.de === idC)) throw new Error(`${p.nom} : ce que C avait montré doit rester affiché`);
+    }
+  });
+  fermerPages();
+
+  /* --- 2. Groupe mixte : un pair sans P2P ----------------------------------- */
+  const m1 = await ouvrirPage('mona');
+  const m2 = await ouvrirPage('noah');
+  const m3 = await ouvrirPage('oscar-sans-p2p', { rtc: 'off' });
+
+  await check('un pair sans P2P : la pastille le compte à part (1/2, orangé)', async () => {
+    const e = await waitUntil(async () => { const s = await pastille(m1); return s.texte === '1/2' ? s : null; },
+      { label: 'pastille 1/2', timeout: 20000 });
+    if (!/\bwarn\b/.test(e.classes)) throw new Error('classes : ' + e.classes);
+    if (!/oscar-sans-p2p\)? : WebSocket \(pas de P2P\)/.test(e.titre)) throw new Error('infobulle : ' + e.titre);
+  });
+
+  await check('une URL part en P2P vers l’un, par le WebSocket vers l’autre, sans doublon', async () => {
+    await envoyerUrl(m1, 'audio', 'https://example.invalid/mixte.mp3');
+    await waitUntil(async () => {
+      const t = await consoleDe(m1);
+      return /a reçu l'audio \(URL via RTC\)/.test(t) && /a reçu l'audio \(URL via WS\)/.test(t);
+    }, { label: 'un accusé P2P et un accusé WebSocket' });
+    await sleep(800);
+    // Le pair servi en P2P ne doit pas l'avoir reçu une seconde fois.
+    const chezNoah = compter(await consoleDe(m2), /a reçu l'audio/g);
+    if (chezNoah !== 1) throw new Error(`noah a traité le message ${chezNoah} fois`);
+  });
+
+  await check('un fichier part aux deux à la fois, par leurs chemins respectifs', async () => {
+    // Petit PNG (1 pixel) fabriqué dans la page, déposé dans le champ fichier.
+    await js(m1, `(() => {
+      const octets = Uint8Array.from(atob('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='), (c) => c.charCodeAt(0));
+      const dt = new DataTransfer();
+      dt.items.add(new File([octets], 'point.png', { type: 'image/png' }));
+      document.getElementById('mediaFile').files = dt.files;
+      document.getElementById('btnSendMediaFile').click();
+      return true; })()`);
+    for (const p of [m2, m3]) {
+      await waitUntil(async () => (await vignettes(p)).some((t) => t.de === m1.id && t.image.startsWith('blob:')),
+        { label: `${p.nom} : image reçue de mona` });
+    }
+    const log = await consoleDe(m1);
+    if (!/Envoi de point\.png : 1 en P2P, 1 par WebSocket/.test(log)) throw new Error('répartition non journalisée');
+  });
+  fermerPages();
+
+  /* --- 3. Un pair sans P2P, quand c'est l'autre qui mène -------------------
+   * Les identifiants sont tirés au hasard par le serveur : on rouvre la page
+   * sans P2P jusqu'à ce que son identifiant soit le plus petit, pour que ce
+   * soit bien l'autre qui lui envoie une offre — et reçoive le refus.
+   * ---------------------------------------------------------------------- */
+  const meneur = await ouvrirMeneur('pia');
+  let sansP2p = null;
+  for (let essai = 0; essai < 20; essai++) {
+    sansP2p = await ouvrirPage('quentin-sans-p2p', { rtc: 'off' });
+    if (sansP2p.id < meneur.id) break;
+    fermerPage(sansP2p);
+    sansP2p = null;
+  }
+  await check('le pair sans P2P refuse l’offre : l’autre bascule aussitôt sur le WebSocket', async () => {
+    if (!sansP2p) throw new Error('impossible d’obtenir l’ordre voulu des identifiants');
+    await waitUntil(async () => (await consoleDe(meneur)).includes('n’a pas de P2P : servi par le WebSocket'),
+      { label: 'refus reçu', timeout: 8000 });
+    const e = await pastille(meneur);
+    if (e.texte !== 'Déconnecté') throw new Error('pastille : ' + e.texte);
+    await envoyerUrl(meneur, 'audio', 'https://example.invalid/refus.mp3');
+    await waitUntil(async () => /a reçu l'audio \(URL via WS\)/.test(await consoleDe(meneur)),
+      { label: 'URL servie par le WebSocket' });
+  });
+  fermerPages();
+
+  /* --- 4. Un pair muet : notre offre reste sans réponse --------------------
+   * Ancienne version sans WebRTC : elle ne répond rien. Le lien ne doit pas
+   * rester sur « connexion… » à vie.
+   * ---------------------------------------------------------------------- */
+  const page = await ouvrirMeneur('rita');
+  let muet = null;
+  for (let essai = 0; essai < 30; essai++) {
+    muet = await connect(PORT, 'muet');
+    if (muet.peerId < page.id) break;
+    await muet.close();
+    muet = null;
+  }
+  await check('une offre restée 15 s sans réponse : lien abandonné, pair servi par le WebSocket', async () => {
+    if (!muet) throw new Error('impossible d’obtenir l’ordre voulu des identifiants');
+    await joinRoom(muet, 'default', { nick: 'muet' });
+    await waitUntil(async () => (await pastille(page)).texte === 'Connexion...', { label: 'lien en cours' });
+    await waitUntil(async () => (await consoleDe(page)).includes('ne répond pas en P2P : servi par le WebSocket'),
+      { label: 'abandon du lien', timeout: 25000 });
+    const e = await pastille(page);
+    if (e.texte !== 'Déconnecté') throw new Error('pastille : ' + e.texte);
+  });
+  if (muet) await muet.close();
+  fermerPages();
+
+  /* --- 5. Quatre pages : K4 ------------------------------------------------ */
+  const k = [];
+  for (const nom of ['p1', 'p2', 'p3', 'p4']) k.push(await ouvrirPage(nom));
+  await check('à quatre, chaque page a trois liens P2P ouverts (K4)', async () => {
+    for (const p of k) {
+      await waitUntil(async () => (await pastille(p)).texte === '3/3', { label: `${p.nom} : 3/3`, timeout: 25000 });
+    }
+  });
+  fermerPages();
+
+  const echecs = results.filter((r) => !r).length;
+  console.log(`\n${results.length - echecs}/${results.length} tests passés.`);
+  await serveur.stop();
+  app.exit(echecs ? 1 : 0);
+});

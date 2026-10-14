@@ -1,5 +1,8 @@
 const { app, BrowserWindow, desktopCapturer, session, ipcMain, dialog } = require('electron');
 const { fork, execFile } = require('child_process');
+const { WEBRTC_UDP_PORTS, etatPortsWebRTC, appliquerPlageWebRTC } = require('./webrtc-ports.js');
+const { OuverturePorts } = require('./port-forwarding.js');
+const { trouverPasserelle, adresseLocaleVers } = require('./nat-mapper.js');
 const path = require('path');
 const os = require('os');
 const https = require('https');
@@ -7,6 +10,40 @@ const { autoUpdater } = require('electron-updater');
 
 let serverProcess = null;
 const SERVER_PORT = 8080;
+
+/* ==========================================================================
+ * Un profil par instance.
+ *
+ * Deux instances de Castunn lancées en même temps partageaient le même dossier
+ * userData. Le premier `localStorage.getItem` de la seconde attendait alors le
+ * verrou LevelDB détenu par la première : mesuré à 5,7 s, soit la quasi-totalité
+ * des « 6 s avant interface prête » (contre ~0,3 s pour une instance seule).
+ * Le cache disque et le cache GPU souffraient du même conflit
+ * (« Unable to move the cache: Accès refusé »).
+ *
+ * On détecte l'occupation avec le verrou d'instance d'Electron — qui porte
+ * justement sur le dossier userData — et on se décale sur « userData-2 », « -3 »…
+ * Les noms sont stables d'un lancement à l'autre : chaque instance retrouve donc
+ * son hôte de signalisation et son pseudo mémorisés.
+ *
+ * À faire AVANT app.whenReady() : après, le profil est déjà ouvert.
+ * ========================================================================== */
+/** Renvoie true pour l’instance principale (celle du profil de base). */
+function claimOwnUserDataDir() {
+  const base = app.getPath('userData');
+  for (let n = 2; !app.requestSingleInstanceLock(); n++) {
+    if (n > 8) { // garde-fou : jamais de boucle infinie au démarrage
+      console.warn('[profil] aucun profil libre, profil partagé (démarrage lent possible)');
+      return false;
+    }
+    app.setPath('userData', `${base}-${n}`);
+  }
+  const chosen = app.getPath('userData');
+  if (chosen !== base) console.log('[profil] instance secondaire :', chosen);
+  return chosen === base;
+}
+
+const instancePrincipale = claimOwnUserDataDir();
 
 // URL FIXE ET PERMANENTE : ce petit fichier "aiguilleur" ne bouge jamais,
 // même si l'hébergement des VRAIES mises à jour change plus tard (ex: ton domaine).
@@ -155,11 +192,30 @@ function execFileAsync(cmd, args) {
   });
 }
 
-async function firewallRuleExists() {
-  const { err } = await execFileAsync('netsh', [
-    'advfirewall', 'firewall', 'show', 'rule', `name=${FIREWALL_RULE}`
-  ]);
-  return !err; // netsh sort en erreur quand aucune règle ne correspond
+/**
+ * Une règle Castunn couvre-t-elle CE programme ?
+ *
+ * Chercher la règle par son seul nom ne suffisait pas : elle est liée au
+ * programme qui l'a créée. Sur une machine où l'application installée l'avait
+ * posée, la version de développement la trouvait, concluait « déjà en place »,
+ * et son serveur restait bloqué — de même après une réinstallation ailleurs.
+ *
+ * PowerShell plutôt que netsh : netsh répond dans la langue du système, avec
+ * des accents mal encodés. Ici, ni texte à lire (le verdict est le code de
+ * sortie), ni chemin à mettre entre guillemets (il passe par l'environnement).
+ */
+async function firewallRuleExists(programme = process.execPath) {
+  return new Promise((resolve) => {
+    execFile('powershell.exe', [
+      '-NoProfile', '-NonInteractive', '-Command',
+      `if (Get-NetFirewallRule -DisplayName '${FIREWALL_RULE}' -ErrorAction SilentlyContinue`
+        + ' | Get-NetFirewallApplicationFilter'
+        + ' | Where-Object { $_.Program -ieq $env:CASTUNN_PROGRAMME }) { exit 0 } else { exit 1 }'
+    ], {
+      windowsHide: true,
+      env: { ...process.env, CASTUNN_PROGRAMME: programme }
+    }, (err) => resolve(!err));
+  });
 }
 
 /**
@@ -169,6 +225,9 @@ async function firewallRuleExists() {
  */
 async function ensureFirewallRule() {
   if (process.platform !== 'win32') return { ok: true, reason: 'hors Windows' };
+  // Les tests chargent le vrai main.js : jamais de demande d’élévation au
+  // milieu d’une suite, qui resterait bloquée sur la fenêtre de Windows.
+  if (process.env.CASTUNN_SANS_PAREFEU === '1') return { ok: true, reason: 'neutralisée (CASTUNN_SANS_PAREFEU)' };
 
   try {
     if (await firewallRuleExists()) return { ok: true, reason: 'déjà en place' };
@@ -210,10 +269,15 @@ function spawnServer() {
         ? path.join(process.resourcesPath, 'app.asar.unpacked', 'node_modules')
         : path.join(__dirname, 'node_modules');
 
-      serverProcess = fork(srvPath, [], {
-        env: { ...process.env, PORT: '8080', NODE_PATH: nodeModulesPath }, // ← NODE_PATH ajouté
-        silent: true
-      });
+      // Serveur du réseau local : un relais TURN n'y servirait à rien, et des
+      // variables TURN_* traînant dans l'environnement de la machine ne
+      // doivent pas lui en faire annoncer un.
+      const env = { ...process.env, PORT: '8080', NODE_PATH: nodeModulesPath };
+      delete env.TURN_URLS;
+      delete env.TURN_SECRET;
+      delete env.TURN_TTL;
+
+      serverProcess = fork(srvPath, [], { env, silent: true });
 
       let resolved = false;
       let stderrBuf = '';
@@ -246,6 +310,36 @@ function spawnServer() {
   });
 }
 
+let ouverturePorts = null;
+
+/**
+ * Orchestrateur d’ouverture de ports, réglages rangés dans le profil de
+ * l’instance. `CASTUNN_SANS_UPNP=1` le neutralise : les tests chargent le
+ * vrai main.js et ne doivent toucher ni au routeur de la machine, ni aux
+ * réglages de son profil — d’où un fichier de réglages jetable.
+ */
+function creerOuverturePorts() {
+  const neutralise = process.env.CASTUNN_SANS_UPNP === '1';
+  // Deux instances sur la même machine ont la même adresse locale : la
+  // seconde « réécrirait » les redirections de la première sans conflit, et
+  // la première à quitter rendrait des ports dont l’autre se sert encore.
+  // Une seule gère donc le routeur : celle du profil de base.
+  const raison = neutralise ? 'désactivé par CASTUNN_SANS_UPNP'
+    : !instancePrincipale ? 'géré par la première instance de Castunn'
+    : '';
+  const dossier = neutralise
+    ? path.join(os.tmpdir(), `castunn-test-${process.pid}`)
+    : app.getPath('userData');
+  return new OuverturePorts({
+    plage: WEBRTC_UDP_PORTS,
+    fichierReglages: path.join(dossier, 'castunn-settings.json'),
+    trouverPasserelle: raison
+      ? async () => { throw new Error(raison); }
+      : () => trouverPasserelle(),
+    adresseLocaleVers
+  });
+}
+
 function killServer() {
   if (!serverProcess) return { ok: true, msg: 'pas lancé' };
   serverProcess.kill();
@@ -266,7 +360,19 @@ function createWindow() {
     }
   });
 
-  win.loadFile(path.join(__dirname, 'castunn.html'));
+  // Plage UDP fixe : sans elle, Chromium pioche au hasard dans les ports
+  // éphémères et aucune ouverture de routeur ne peut viser juste.
+  if (appliquerPlageWebRTC(win.webContents)) {
+    console.log(`[webrtc] plage UDP ${WEBRTC_UDP_PORTS.min}-${WEBRTC_UDP_PORTS.max} appliquée.`);
+  }
+
+  // Modes de test de la page (voir castunn.html) : on ne tape pas d'URL dans
+  // une application, d'où ces variables d'environnement.
+  const query = {};
+  if (process.env.CASTUNN_FORCE_RELAY === '1') query.forceRelay = '1';
+  if (process.env.CASTUNN_SANS_RTC === '1') query.rtc = 'off';
+
+  win.loadFile(path.join(__dirname, 'castunn.html'), { query });
 }
 
 app.whenReady().then(() => {
@@ -279,6 +385,20 @@ app.whenReady().then(() => {
     return { ...res, firewall: fw };
   });
   ipcMain.handle('server-stop',   () => killServer());
+
+  // État de la plage UDP, pour que la console de l’app puisse le dire.
+  ipcMain.handle('webrtc-ports', () => etatPortsWebRTC());
+
+  // Ouverture automatique de la plage UDP sur le routeur (UPnP / NAT-PMP).
+  ouverturePorts = creerOuverturePorts();
+  ouverturePorts.on('etat', (etat) => {
+    console.log('[UPnP]', etat.message);
+    for (const w of BrowserWindow.getAllWindows()) {
+      if (!w.isDestroyed()) w.webContents.send('port-forwarding-state', etat);
+    }
+  });
+  ipcMain.handle('port-forwarding-status', () => ouverturePorts.etatPublic());
+  ipcMain.handle('port-forwarding-set', (_evt, actif) => ouverturePorts.definirActif(actif));
   ipcMain.handle('server-status', () => ({
     running: !!serverProcess,
     port: SERVER_PORT,
@@ -308,6 +428,17 @@ app.whenReady().then(() => {
 
   createWindow();
 
+  // Diagnostic différé : sonder trente ports prend un instant, et rien
+  // n’en dépend pour démarrer.
+  etatPortsWebRTC().then((e) => {
+    const ligne = `[webrtc] ports UDP ${e.min}-${e.max} : ${e.libres}/${e.total} libres`;
+    if (e.suffisant) console.log(ligne);
+    else console.warn(`${ligne} — trop peu, d’autres programmes occupent la plage.`);
+  }).catch((err) => console.warn('[webrtc] sondage des ports impossible :', err.message));
+
+  // Jamais attendu : un routeur lent ou muet ne doit rien retarder.
+  ouverturePorts.demarrer();
+
   // L'auto-update ne fonctionne (et n'a de sens) qu'une fois l'app installée/packagée.
   if (app.isPackaged) {
     setupAutoUpdater();
@@ -315,7 +446,25 @@ app.whenReady().then(() => {
 });
 
 // Tue le serveur enfant proprement à la fermeture
-app.on('before-quit', () => killServer());
+/* ==========================================================================
+ * Fermeture : rendre les ports au routeur.
+ *
+ * Indispensable quand le routeur n’accepte que des baux permanents ; utile
+ * sinon, pour ne pas laisser une heure de redirection sans propriétaire. On
+ * suspend la fermeture le temps de le faire, trois secondes au plus : une
+ * application qui ne quitte pas serait pire qu’un port qui expire seul.
+ * ========================================================================== */
+let portsRendus = false;
+
+app.on('before-quit', (event) => {
+  killServer();
+  if (portsRendus || !ouverturePorts?.aDesRedirections()) return;
+  event.preventDefault();
+  portsRendus = true;
+  ouverturePorts.arreter({ delaiMax: 3000 })
+    .catch((e) => console.warn('[UPnP] ports non rendus :', e.message))
+    .finally(() => app.quit());
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

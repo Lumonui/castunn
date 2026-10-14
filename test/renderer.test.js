@@ -77,8 +77,16 @@ app.whenReady().then(async () => {
   });
   fenetre = win;
   const pageErrors = [];
-  win.webContents.on('console-message', (_e, level, message) => {
-    if (level >= 2 && !message.includes('Security Warning')) pageErrors.push(message);
+  // Electron 35+ : un objet évènement, `level` en toutes lettres. Avant :
+  // arguments positionnels, `level` numérique (2 avertissement, 3 erreur),
+  // encore transmis mais dépréciés. On accepte les deux : le jour où les
+  // anciens disparaîtront, un collecteur muet rendrait le test des erreurs
+  // vide — et vert.
+  win.webContents.on('console-message', (e, niveauAncien, messageAncien) => {
+    const level = e?.level ?? niveauAncien;
+    const message = String(e?.message ?? messageAncien ?? '');
+    const grave = level === 'warning' || level === 'error' || level >= 2;
+    if (grave && !message.includes('Security Warning')) pageErrors.push(message);
   });
 
   await win.loadFile(path.join(PROJECT, 'castunn.html'));
@@ -204,7 +212,7 @@ app.whenReady().then(async () => {
 
     const src = await waitUntil(
       async () => {
-        const v = await win.webContents.executeJavaScript('document.getElementById("imageViewer").src || ""');
+        const v = await win.webContents.executeJavaScript('document.querySelector("#receptions .tuile-image")?.src || ""');
         return v.startsWith('blob:') ? v : null;
       },
       { label: 'image affichée' }
@@ -214,7 +222,7 @@ app.whenReady().then(async () => {
 
   await check('un envoi marqué "fichier" est téléchargé, jamais affiché', async () => {
     // kind:'file' => jamais envoyé au lecteur, quel que soit le type MIME
-    const before = await win.webContents.executeJavaScript('document.getElementById("imageViewer").src || ""');
+    const before = await win.webContents.executeJavaScript('document.querySelector("#receptions .tuile-image")?.src || ""');
     muteMessages.length = 0;
     mute.send(JSON.stringify({
       type: 'binary-meta', filename: 'archive.bin', size: 3,
@@ -232,7 +240,7 @@ app.whenReady().then(async () => {
     );
     if (!/re.u/i.test(confirmation.text)) throw new Error('accusé inattendu : ' + confirmation.text);
 
-    const after = await win.webContents.executeJavaScript('document.getElementById("imageViewer").src || ""');
+    const after = await win.webContents.executeJavaScript('document.querySelector("#receptions .tuile-image")?.src || ""');
     if (after !== before) throw new Error('le fichier a été affiché alors qu\'il devait être téléchargé');
   });
 
@@ -249,6 +257,58 @@ app.whenReady().then(async () => {
   await check('le compteur de pairs redescend à 0', async () => {
     const n = await waitUntil(async () => (await peersCount()) === '0' ? '0' : null, { label: 'peersCount = 0' });
     if (n !== '0') throw new Error('compteur = ' + n);
+  });
+
+  // Un pair arrivé en IPv6 (le serveur le constate via le proxy) mais qui
+  // déclare son IPv4 : c'est le cas d'un contact hors du réseau local.
+  const dual = new WebSocket(`ws://127.0.0.1:${PORT}`, {
+    headers: { 'x-forwarded-for': '2001:863:294:3d9b:a0c:ca63:d094:b080' }
+  });
+  await new Promise((r) => dual.once('open', r));
+  dual.send(JSON.stringify({ type: 'join', room: 'default', ip: '80.214.20.117', nick: 'sir' }));
+
+  const ligneDe = (fragment) => win.webContents.executeJavaScript(`
+    (() => {
+      const l = [...document.querySelectorAll("#chatLog div")]
+        .find((d) => d.textContent.includes(${JSON.stringify(fragment)}));
+      return l ? { texte: l.textContent, title: l.title } : null;
+    })()`);
+
+  await check("un pair venu en IPv6 est affiché sous son IPv4, l'IPv6 au survol", async () => {
+    const ligne = await waitUntil(async () => ligneDe('80.214.20.117'), { label: 'ligne du pair IPv6' });
+    if (!ligne.texte.includes('Connexion de 80.214.20.117 (sir)')) {
+      throw new Error(`ligne inattendue : ${ligne.texte}`);
+    }
+    if (ligne.texte.includes('2001:863:294:3d9b:a0c:ca63:d094:b080')) {
+      throw new Error(`l'IPv6 encombre la ligne : ${ligne.texte}`);
+    }
+    if (ligne.title !== 'IPv6 : 2001:863:294:3d9b:a0c:ca63:d094:b080') {
+      throw new Error(`infobulle de ligne : ${JSON.stringify(ligne.title)}`);
+    }
+  });
+
+  await check("l'infobulle des pairs donne les deux adresses", async () => {
+    const title = await waitUntil(
+      async () => { const t = await peersTitle(); return t.includes('80.214.20.117') ? t : null; },
+      { label: 'infobulle à deux adresses' }
+    );
+    if (!title.includes('80.214.20.117 (sir) · 2001:863:294:3d9b:a0c:ca63:d094:b080')) {
+      throw new Error('infobulle : ' + title);
+    }
+  });
+
+  // On le fait repartir : la suite des tests compte sur un seul pair.
+  dual.close();
+
+  // Témoin : une erreur volontaire doit être captée. Sinon, « aucune erreur »
+  // ne voudrait rien dire.
+  await check('le collecteur d’erreurs de la page fonctionne', async () => {
+    await win.webContents.executeJavaScript('console.error("témoin du collecteur"); true');
+    await waitUntil(async () => pageErrors.some((m) => m.includes('témoin du collecteur')),
+      { label: 'erreur témoin captée', timeout: 3000 });
+    const sansTemoin = pageErrors.filter((m) => !m.includes('témoin du collecteur'));
+    pageErrors.length = 0;
+    pageErrors.push(...sansTemoin);
   });
 
   await check('aucune erreur JavaScript dans la page', async () => {

@@ -89,6 +89,11 @@ small { color: var(--fg-muted); font-size: 12px; }
   color: var(--ko);
   text-shadow: 0 0 8px rgba(243,139,168,.35);
 }
+/* Connecté, mais par un relais : ça marche, en moins bien. */
+.status.warn {
+  color: var(--warn);
+  text-shadow: 0 0 8px rgba(250,179,135,.40);
+}
 
 /* ── Séparateur ─────────────────────────────────────────────── */
 .sep {
@@ -381,7 +386,6 @@ video {
   box-shadow: 0 4px 20px rgba(0,0,0,.5);
 }
 
-img#imageViewer,
 img#localImage {
   max-width: 100%;
   height: auto;
@@ -576,4 +580,32 @@ strong {
   border-color: rgba(137,180,250,.55);
   box-shadow: var(--shadow-card), 0 0 0 3px rgba(137,180,250,.15);
   background: rgba(137,180,250,.05);
+}
+
+/* Ligne de présence dont une seconde adresse est consultable au survol. */
+#chatLog .alt-ip {
+  cursor: help;
+}
+
+/* ── Réception : une vignette par émetteur ──────────────────── */
+/* Un seul émetteur : la vignette prend toute la largeur, comme l'ancien
+   lecteur. Plusieurs : elles se rangent en grille. */
+.receptions { display: grid; gap: 12px; margin-top: 10px; }
+.receptions.plusieurs { grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+.tuile {
+  margin: 0;
+  padding: 8px;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius);
+  background: var(--console-bg);
+  display: grid;
+  gap: 6px;
+}
+.tuile figcaption { font-size: 12px; color: var(--fg-muted); }
+.tuile audio, .tuile video { width: 100%; }
+.tuile-image {
+  max-width: 100%;
+  height: auto;
+  border-radius: var(--radius);
+  box-shadow: 0 4px 20px rgba(0,0,0,.4);
 }

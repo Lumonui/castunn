@@ -17,18 +17,61 @@ export function cleanPeerIp(ip) {
   return v;
 }
 
+/** Vrai pour une IPv4 en notation pointée. */
+export function isIPv4(ip) {
+  const parties = String(ip || '').split('.');
+  return parties.length === 4
+    && parties.every((p) => /^[0-9]{1,3}$/.test(p) && Number(p) <= 255);
+}
+
+/**
+ * Les adresses connues d'un pair, triées pour l'affichage.
+ *
+ * Un pair joignable en IPv6 arrive souvent par là (les systèmes la
+ * privilégient quand le serveur publie un AAAA), alors que l'adresse qu'il
+ * annonce lui-même vient d'un service qui ne répond qu'en IPv4. On reçoit
+ * donc deux adresses valides pour la même personne : `principale` est celle
+ * qu'on montre (l'IPv4, qu'on reconnaît et qu'on s'échange), `secondaire`
+ * l'autre, reléguée à l'infobulle.
+ */
+export function peerAddresses(info = {}) {
+  const vues = [cleanPeerIp(info.ip), cleanPeerIp(info.ipDeclared)]
+    .filter(Boolean)
+    .filter((v, i, t) => t.indexOf(v) === i);
+  const principale = vues.find(isIPv4) || vues[0] || '';
+  const secondaire = vues.find((v) => v !== principale) || '';
+  return { principale, secondaire };
+}
+
 /**
  * Étiquette lisible d'un pair : IP et pseudo quand on les connaît, sinon
  * l'un des deux, et en dernier recours un identifiant court — jamais une
  * adresse loopback ni un identifiant brut de huit caractères.
  */
 export function formatPeerLabel(peerId, info = {}) {
-  const ip = cleanPeerIp(info.ip);
+  const ip = peerAddresses(info).principale;
   const nick = String(info.nick || '').trim();
   if (ip && nick) return `${ip} (${nick})`;
   if (ip) return ip;
   if (nick) return nick;
   return `un pair (${String(peerId || '?').slice(0, 6)})`;
+}
+
+/**
+ * Mention de l'adresse secondaire, pour une infobulle. Chaîne vide quand on
+ * ne connaît qu'une seule adresse : il n'y a alors rien à révéler au survol.
+ */
+export function formatPeerAltAddress(info = {}) {
+  const { secondaire } = peerAddresses(info);
+  if (!secondaire) return '';
+  return `${isIPv4(secondaire) ? 'Autre adresse' : 'IPv6'} : ${secondaire}`;
+}
+
+/** Ligne d'un pair pour l'infobulle du compteur : étiquette + adresse secondaire. */
+export function formatPeerDetail(peerId, info = {}) {
+  const label = formatPeerLabel(peerId, info);
+  const { secondaire } = peerAddresses(info);
+  return secondaire ? `${label} · ${secondaire}` : label;
 }
 
 /** Nom affiché pour soi-même dans le tchat. */

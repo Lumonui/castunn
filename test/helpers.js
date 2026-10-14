@@ -9,13 +9,18 @@ const WebSocket = require('ws');
 
 const SERVER_PATH = path.join(__dirname, '..', 'server.js');
 
-/** Lance server.js sur un port dédié et attend qu'il soit prêt. */
-function startServer(port, { timeout = 8000 } = {}) {
+/**
+ * Lance server.js sur un port dédié et attend qu'il soit prêt.
+ * `env` complète l'environnement (ex. TURN_URLS) ; une valeur null retire
+ * la variable, pour qu'un TURN_* de la machine ne fausse pas un test.
+ */
+function startServer(port, { timeout = 8000, env = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const child = fork(SERVER_PATH, [], {
-      env: { ...process.env, PORT: String(port) },
-      silent: true
-    });
+    const environnement = { ...process.env, PORT: String(port) };
+    for (const [k, v] of Object.entries(env)) {
+      if (v === null) delete environnement[k]; else environnement[k] = v;
+    }
+    const child = fork(SERVER_PATH, [], { env: environnement, silent: true });
 
     let out = '';
     const timer = setTimeout(() => {
@@ -30,6 +35,8 @@ function startServer(port, { timeout = 8000 } = {}) {
         resolve({
           child,
           port,
+          // Tout ce que le serveur a écrit, y compris après son démarrage.
+          sortie: () => out,
           stop: () => new Promise((r) => {
             if (child.exitCode !== null) return r();
             child.once('exit', () => r());
@@ -63,11 +70,13 @@ function httpGet(port, urlPath) {
  * déjà arrivé avant l'appel (d'où la file `received`).
  */
 class TestClient {
-  constructor(url, name) {
+  constructor(url, name, options = {}) {
     this.name = name;
     this.received = [];   // { json?, binary? }
     this.waiters = [];
-    this.ws = new WebSocket(url);
+    // `options` permet notamment de poser des en-têtes de reverse proxy
+    // (x-forwarded-for) pour simuler un pair venu d'ailleurs.
+    this.ws = new WebSocket(url, options);
     this.ws.on('message', (data, isBinary) => {
       const entry = isBinary
         ? { binary: Buffer.from(data) }
@@ -140,8 +149,8 @@ class TestClient {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /** Connecte un client et récupère son peerId (message `hello`). */
-async function connect(port, name) {
-  const c = new TestClient(`ws://127.0.0.1:${port}`, name);
+async function connect(port, name, options = {}) {
+  const c = new TestClient(`ws://127.0.0.1:${port}`, name, options);
   await c.open();
   const hello = await c.waitForType('hello');
   c.peerId = hello.peerId;

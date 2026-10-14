@@ -97,11 +97,9 @@
         <button id="btnDeactivate">Désactiver</button>
       </div>
 
-      <div class="players" style="margin-top:10px">
-        <audio id="audioPlayer" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback"></audio>
-        <video id="videoPlayer" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture></video>
-        <img id="imageViewer" alt="Image reçue" />
-      </div>
+      <!-- Une vignette par émetteur : plusieurs pairs peuvent diffuser à la fois. -->
+      <div id="receptions" class="receptions"></div>
+      <div id="receptionsVide" class="muted" style="margin-top:10px">Rien reçu pour l’instant.</div>
 
       <div id="recvError" class="muted" style="color:var(--error);margin-top:8px"></div>
       <small class="muted">Astuce : « Activer » débloque éventuellement l’autoplay (protection du navigateur).</small>
@@ -151,6 +149,17 @@
 			Démarre un serveur Castunn en arrière-plan sur le port 8080. Laissez le champ IP vide pour s'y connecter automatiquement.
 		  </p>
 		  </div>
+		  <div class="settings-row" id="portForwardingRow" style="display:none">
+			<label class="settings-label" for="chkPortForwarding">Ports du routeur</label>
+			<label class="row" style="gap:8px;align-items:center;cursor:pointer">
+			  <input type="checkbox" id="chkPortForwarding" />
+			  <span id="portForwardingLabel">Ouvrir automatiquement les ports UDP de Castunn (UPnP / NAT-PMP)</span>
+			</label>
+			<span id="portForwardingStatus" style="font-size:12px;color:#7f849a"></span>
+			<p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			  Favorise les connexions directes avec les pairs hors de votre réseau. Décocher supprime aussitôt les redirections.
+			</p>
+		  </div>
 		  Castunn v.1.2 du 23-07-2026
 		  <div class="settings-actions">
 			<button type="button" class="btn" id="settingsCancel">Annuler</button>
@@ -168,6 +177,13 @@
   import { createPeerRegistry } from './src/renderer/peers.js';
   import { resolveSignalUrl, buildWsUrl } from './src/renderer/signal-url.js';
   import { setErrorSink, reportError, installGlobalErrorHandlers } from './src/renderer/errors.js';
+  import { buildIceServers } from './src/renderer/rtc-negotiation.js';
+  import { describeRtcPath, formatRtcPath, describeCollectes, summarizeGathered } from './src/renderer/rtc-stats.js';
+  import { sanitizeTurnServers, credentialsExpiring, turnFailureReason, explainNoRtc }
+    from './src/renderer/turn-config.js';
+  import { createMesh } from './src/renderer/rtc-mesh.js';
+  import { resumerMaillage } from './src/renderer/mesh-status.js';
+  import { createReceptionTiles } from './src/renderer/reception-tiles.js';
 
   /* === Etat global === */
   let socket;
@@ -187,7 +203,11 @@
     const pill = document.getElementById('peersPill');
     if (!el) return;
     el.textContent = peersMap.size;
-    pill.title = peersMap.labels().join('\n') || 'Aucun pair connecté';
+    pill.title = peersMap.details().join('\n') || 'Aucun pair connecté';
+    // Le compte de pairs et leurs noms nourrissent aussi la pastille RTC et
+    // les titres des vignettes.
+    majPastilleRtc();
+    tuiles.majLabels();
   }
 
   /* --- Lignes système "Connexion de ..." -------------------------------
@@ -203,9 +223,24 @@
     return `Connexion de ${peerLabel(peerId)}`;
   }
 
+  /**
+   * Pose au survol l'adresse qu'on ne montre pas dans la ligne.
+   *
+   * Un pair arrivé en IPv6 mais qui annonce une IPv4 est affiché sous son
+   * IPv4 ; son IPv6 reste consultable ici plutôt que d'encombrer le tchat.
+   * Sans seconde adresse, pas de bulle : rien à révéler.
+   */
+  function applyPresenceTitle(el, peerId) {
+    if (!el) return;
+    const autre = peerId ? peersMap.altAddress(peerId) : '';
+    el.title = autre;
+    el.classList.toggle('alt-ip', !!autre);
+  }
+
   function announcePresence(peerId, action) {
     const ts = Date.now();
     const el = appendChat({ from: '[système]', text: presenceText(peerId, action), ts }, false);
+    applyPresenceTitle(el, peerId);
     if (!peerId) return;
     if (action === 'leave') presenceLines.delete(peerId);
     else presenceLines.set(peerId, { el, ts, action });
@@ -216,6 +251,8 @@
     if (!entry || !entry.el) return;
     const ts = new Date(entry.ts).toLocaleTimeString();
     entry.el.textContent = `[${ts}] [système]: ${presenceText(peerId, entry.action)}`;
+    // L'identité vient d'arriver : la seconde adresse aussi, souvent.
+    applyPresenceTitle(entry.el, peerId);
   }
   
   function sendAnnounce() {
@@ -234,17 +271,11 @@
   const recvError = document.getElementById('recvError');
   const consoleLog = document.getElementById('consoleLog');
 
-  const audioPlayer = document.getElementById('audioPlayer');
-  const videoPlayer = document.getElementById('videoPlayer');
-  const imageViewer = document.getElementById('imageViewer');
 
   const chatLog = document.getElementById('chatLog');
   const chatInput = document.getElementById('chatInput');
   const chatSend = document.getElementById('chatSend');
 
-  audioPlayer.setAttribute('controlsList','nodownload noplaybackrate noremoteplayback');
-  videoPlayer.setAttribute('controlsList','nodownload noplaybackrate noremoteplayback');
-  try { videoPlayer.disablePictureInPicture = true; } catch{}
 
   // --- WebRTC ---
   const rtcStatus = document.getElementById('rtcStatus');
@@ -264,32 +295,173 @@
     return !!RTCPeer && (window.isSecureContext || location.hostname === 'localhost' || isElectron());
   }
 
-  let pc = null;             // RTCPeerConnection
-  let dc = null;             // RTCDataChannel
   let myId = null;           // id WS donné par le serveur (hello)
-  let peerId = null;         // id distant choisi
-  const room = 'default';    // simple room (tu peux la rendre paramétrable)
 
-  // currentMime/Kind/Filename ne servent plus qu'aux chemins "URL" et aux
-  // replis d'affichage : l'assemblage des blobs vit dans les récepteurs.
-  let currentMime = '';
-  let currentKind = ''; // 'audio' | 'video' | 'image' | 'file'
-  let currentFilename = '';
+  // Ce que le serveur de signalisation sait faire en plus du protocole
+  // d'origine (champ `capacites` du hello) : adresser un message à certains
+  // pairs seulement, signer les envois binaires de leur émetteur. Un ancien
+  // serveur n'annonce rien, et la page se comporte alors comme avant.
+  let capacitesServeur = [];
+  const serveurSait = (c) => capacitesServeur.includes(c);
 
-  function setRtcStatus(text) {
-    rtcStatus.textContent = text;
-    if (text === 'Connecté') { rtcStatus.classList.add('ok'); rtcStatus.classList.remove('ko'); }
-    else { rtcStatus.classList.remove('ok'); rtcStatus.classList.add('ko'); }
+  /* --- Modes de test ------------------------------------------------------
+   * ?forceRelay=1 : ICE n'emploie que des relais (iceTransportPolicy 'relay'),
+   *                 pour valider le chemin TURN sans deux réseaux difficiles.
+   *                 Sans relais annoncé, aucune connexion n'aboutit : c'est
+   *                 alors une simulation d’échec RTC réaliste.
+   * ?rtc=off      : aucune connexion RTC, pour valider le repli WebSocket.
+   * Sous Electron : CASTUNN_FORCE_RELAY=1 et CASTUNN_SANS_RTC=1, que main.js
+   * traduit en paramètres d’URL. Toujours annoncés dans la console : un mode
+   * de test oublié ne doit jamais passer inaperçu.
+   * -------------------------------------------------------------------- */
+  const PARAMS_TEST = new URLSearchParams(location.search);
+  const FORCE_RELAY = PARAMS_TEST.get('forceRelay') === '1';
+  const SANS_RTC = PARAMS_TEST.get('rtc') === 'off';
+
+  /** Phrase expliquant l’absence de P2P, d’après le relais et les pairs. */
+  function raisonSansRtc() {
+    return explainNoRtc({
+      pairPresent: peersMap.size > 0,
+      turnAnnonce: iceConfig.turn.length > 0,
+      turnJoignable: iceConfig.turnJoignable
+    });
   }
 
-  function rtcReady() { 
-    let isReady = dc && dc.readyState === 'open';
-    if (isReady) {
-      setRtcStatus('Connecté');
-    } else {
-      setRtcStatus('Déconnecté');
+  /* --- Relais TURN annoncé par le serveur de signalisation ----------------
+   * Il arrive avec le hello (voir server.js). Propre à la session WebSocket,
+   * donc oublié à chaque reconnexion : un autre serveur, un autre relais.
+   * -------------------------------------------------------------------- */
+  let iceConfig = { recue: false, turn: [], expireA: null, renouvelable: false };
+  let attentesIceConfig = [];
+
+  function oublierIceConfig() {
+    iceConfig = { recue: false, turn: [], expireA: null, renouvelable: false };
+  }
+
+  /** Config ICE reçue, avec le hello ou en réponse à un renouvellement. */
+  function recevoirIceConfig(msg, { viaHello }) {
+    const annonce = Array.isArray(msg.iceServers);
+    const turn = sanitizeTurnServers(msg.iceServers);
+    if (annonce && msg.iceServers.length && !turn.length) {
+      addConsole('[TURN] relais annoncé mais mal formé : ignoré.');
     }
-    return isReady;
+    iceConfig = {
+      recue: true,
+      turn,
+      expireA: Number(msg.iceExpiresAt) || null,
+      // On ne demande un renouvellement qu'à un serveur qui annonce un relais :
+      // un ancien serveur ne connaît pas ce message et le relaierait à la room.
+      renouvelable: iceConfig.renouvelable || turn.length > 0
+    };
+    for (const fin of attentesIceConfig.splice(0)) fin();
+
+    if (!turn.length) return; // serveur sans relais (cas du LAN) : rien à dire
+    if (viaHello) {
+      addConsole(`[TURN] relais annoncé par le serveur : ${turn.flatMap((s) => s.urls).join(', ')}`);
+      testerTurn(turn);
+    } else {
+      addConsole('[TURN] identifiants renouvelés.');
+    }
+  }
+
+  /** Attend la prochaine config ICE, jamais plus de `ms`. */
+  function prochaineIceConfig(ms) {
+    return new Promise((resolve) => {
+      const fin = () => {
+        clearTimeout(minuteur);
+        attentesIceConfig = attentesIceConfig.filter((f) => f !== fin);
+        resolve();
+      };
+      const minuteur = setTimeout(fin, ms);
+      attentesIceConfig.push(fin);
+    });
+  }
+
+  /**
+   * Avant de créer une connexion : la config est-elle là, ses identifiants
+   * valent-ils encore ? Jamais plus de 1,5 s d'attente : sans relais, on part
+   * quand même, le direct reste possible.
+   */
+  async function preparerIceConfig() {
+    if (!iceConfig.recue) await prochaineIceConfig(1500);
+    if (iceConfig.renouvelable && credentialsExpiring(iceConfig.expireA)) {
+      addConsole('[TURN] identifiants bientôt expirés : renouvellement…');
+      const attente = prochaineIceConfig(1500);
+      if (sendSignal({ type: 'ice-config' })) await attente;
+    }
+  }
+
+  /**
+   * Le relais annoncé répond-il ? Une connexion jetable, limitée aux relais,
+   * doit obtenir un candidat « relay » : sinon il est injoignable ou refuse
+   * nos identifiants. Jamais bloquant, toujours refermée.
+   */
+  async function testerTurn(turn) {
+    if (!hasWebRTC()) return;
+    const config = iceConfig; // une reconnexion peut la remplacer pendant la sonde
+    const urls = turn.flatMap((s) => s.urls).join(', ');
+    let sonde;
+    try {
+      sonde = new RTCPeerConnection({ iceServers: turn, iceTransportPolicy: 'relay' });
+    } catch (e) {
+      config.turnJoignable = false;
+      addConsole(`[TURN] annoncé mais inutilisable : ${e.message}`);
+      return;
+    }
+    const erreurs = [];
+    const relais = await new Promise((resolve) => {
+      const minuteur = setTimeout(() => resolve(null), 3000);
+      sonde.onicecandidate = (e) => {
+        const c = e.candidate;
+        if (c && (c.type === 'relay' || / typ relay /.test(c.candidate))) {
+          clearTimeout(minuteur);
+          resolve(c);
+        }
+      };
+      sonde.onicecandidateerror = (e) => erreurs.push({ code: e.errorCode, texte: e.errorText });
+      sonde.createDataChannel('sonde');
+      sonde.createOffer()
+        .then((offre) => sonde.setLocalDescription(offre))
+        .catch((e) => { clearTimeout(minuteur); erreurs.push({ texte: e.message }); resolve(null); });
+    });
+    try { sonde.close(); } catch {}
+    config.turnJoignable = !!relais;
+    addConsole(relais
+      ? `[TURN] disponible (${urls})`
+      : `[TURN] annoncé mais injoignable : ${turnFailureReason(erreurs)}`);
+  }
+  const room = 'default';    // simple room (tu peux la rendre paramétrable)
+
+
+  /* --- Pastille RTC du maillage (src/renderer/mesh-status.js) -------------
+   * À deux, elle parle comme avant (« Connecté »…) ; à partir de trois, elle
+   * compte les liens P2P ouverts (« 2/3 ») et l'infobulle détaille chaque pair.
+   * -------------------------------------------------------------------- */
+  function majPastilleRtc() {
+    const ids = peersMap.ids();
+    let { texte, classe, titre } = resumerMaillage(ids.map((id) => {
+      const lien = maillage.lien(id);
+      return {
+        label: peerLabel(id),
+        lien: lien && {
+          ouvert: maillage.estOuvert(id),
+          connectionState: lien.pc.connectionState,
+          chemin: lien.chemin
+        }
+      };
+    }));
+    // RTC impossible ici (mode de test, contexte non sûr) : on le dit plutôt
+    // que d'afficher une connexion qui ne viendra jamais.
+    if (ids.length && !rtcPermis()) {
+      texte = 'Indisponible';
+      classe = 'ko';
+      titre = SANS_RTC ? 'Désactivé par ?rtc=off (mode de test)' : 'WebRTC indisponible dans ce contexte';
+    }
+    rtcStatus.textContent = texte;
+    rtcStatus.classList.toggle('ok', classe === 'ok');
+    rtcStatus.classList.toggle('warn', classe === 'warn');
+    rtcStatus.classList.toggle('ko', classe === 'ko');
+    rtcStatus.title = titre;
   }
 
   // Adresse du serveur de signalisation Cloudflare Workers
@@ -364,24 +536,39 @@
   /**
    * Remet à zéro tout ce qui dépend de la session WebSocket courante.
    * Sans ça, les pairs de la session précédente restaient dans peersMap
-   * (compteur qui ne redescend jamais) et l'ancienne RTCPeerConnection,
-   * morte, empêchait d'en établir une nouvelle (ensurePeerConnection
-   * renvoie `pc` s'il est non nul).
+   * (compteur qui ne redescend jamais) et leurs liens RTC, morts, restaient
+   * dans le maillage.
    */
   function resetPeerState() {
     peersMap.clear();
-    try { dc?.close(); } catch {}
-    try { pc?.close(); } catch {}
-    pc = null; dc = null; peerId = null;
-    setRtcStatus('Déconnecté');
+    // Tous les liens visaient des pairs de la session qui se termine. Ce
+    // qu'ils nous ont déjà montré reste affiché, comme avant ; seuls les
+    // transferts inachevés sont abandonnés.
+    maillage.fermerTout();
+    oublierRecepteurs();
+    pairsSansP2p.clear();
+    oublierIceConfig();
+    majPastilleRtc();
   }
 
   // Reconnexion propre en lisant la valeur de la modale (ou le fallback)
   async function connectFromModal(opts) {
+    // Une reconnexion explicite remplace le réessai automatique en attente.
+    // Sans ça, les deux partaient : deux balayages, deux `join`, et les autres
+    // pairs voyaient un cycle connexion/déconnexion/connexion inutile.
+    cancelReconnect();
+
     const url = await resolveSignalUrlAsync(opts);
     if (!url) {
       addConsole('[WS] Aucune URL fournie (modale vide et aucun fallback).');
       setWsStatus('Erreur URL');
+      return;
+    }
+
+    // Le réessai automatique a pu aboutir pendant le balayage ci-dessus : s'il
+    // nous a déjà mis sur ce serveur, rien à refaire.
+    if (socket && socket.readyState === WebSocket.OPEN && window.__castunnSignalUrl === url) {
+      addConsole(`[WS] déjà connecté à ${url}`);
       return;
     }
 
@@ -405,22 +592,44 @@
     return formatSelfName({ ip: window.userIP, nick: window.__nickname });
   }
 
-  // Envoi « application » : passe par RTC si possible, sinon WS
-  function sendApp(obj){
-    const payload = (typeof obj === 'string') ? obj : JSON.stringify(obj);
-    // Un échec d'envoi RTC fait basculer sur le WebSocket : c'est voulu, mais
-    // il faut pouvoir le constater, sinon un transfert lent reste inexpliqué.
-    if (rtcReady()) {
-      try { dc.send(payload); return true; }
-      catch (e) { reportError('envoi RTC (bascule sur WebSocket)', e); }
-    }
-    return sendJSON(obj); // ta fonction WS existante
+  /* --- Envoi « application » dans le maillage -------------------------------
+   * Chaque pair de la room reçoit le message par son lien P2P s'il est ouvert,
+   * sinon par le WebSocket — adressé aux seuls pairs concernés quand le
+   * serveur sait le faire. Avant, tout partait sur l'unique canal ouvert : à
+   * trois, le troisième ne recevait rien.
+   *
+   * Chaque message porte un identifiant (`mid`) : un récepteur qui le reçoit
+   * deux fois (ancien serveur qui diffuse à toute la room) écarte le doublon.
+   * --------------------------------------------------------------------- */
+  const nouveauMid = () => (crypto.randomUUID ? crypto.randomUUID() : String(Math.random()).slice(2));
+
+  /** Pairs de la room, répartis entre P2P (lien ouvert) et WebSocket. */
+  function repartir() {
+    const tous = peersMap.ids();
+    const p2p = tous.filter((id) => maillage.estOuvert(id));
+    return { tous, p2p, ws: tous.filter((id) => !p2p.includes(id)) };
+  }
+
+  function sendApp(obj) {
+    const msg = { ...obj, mid: obj.mid || nouveauMid() };
+    const { tous, p2p, ws } = repartir();
+    // Personne dans la room : comme avant, le message part au serveur (et
+    // l'erreur « Non connecté » s'affiche si le WebSocket est tombé).
+    if (!tous.length) return sendJSON(msg);
+
+    const payload = JSON.stringify(msg);
+    const rates = p2p.filter((id) => !maillage.envoyer(id, payload));
+    const viaWs = ws.concat(rates);
+    const servisP2p = p2p.length - rates.length;
+    if (!viaWs.length) return true;
+    // Sans adressage (ancien serveur), il part à toute la room : les pairs
+    // déjà servis en P2P l'écartent grâce à son `mid`.
+    const okWs = sendJSON(serveurSait('adressage') ? { ...msg, to: viaWs } : msg);
+    return okWs || servisP2p > 0;
   }
 
   // guessMimeByExt vient de ./src/renderer/protocol.js
 
-  // pour libérer la mémoire des blobs
-  let lastObjectURL = null;
   
   let iAmEmitter = false; // true quand on a envoyé un média
 
@@ -510,6 +719,9 @@
   const localPlaceholder = document.getElementById('localPlaceholder');
   let lastLocalURL = null; // Mémoire d’URL locale pour libérer quand on ferme/remplace
   let localStream = null; // Mémoire du flux écran
+  // Flux en direct que nous diffusons (partage d’écran ou captureStream) :
+  // un pair dont le lien s’ouvre en cours de diffusion le reçoit aussi.
+  let fluxEnDirect = null;
 
   function localStopAll(){
 	if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
@@ -631,11 +843,23 @@ function showLocalImage(url){
   /* === WebSocket === */
   let wsGen = 0;
   let wsFailCount = 0;
+
+  // Réessai automatique après une coupure. Suivi dans une variable pour pouvoir
+  // l'annuler : une reconnexion demandée entre-temps (modale, démarrage du
+  // serveur local) doit rester la seule à s'exécuter.
+  let reconnectTimer = null;
+  function cancelReconnect() {
+    if (reconnectTimer === null) return;
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+
   function createSocket(url = resolveSignalUrlSync()){
+    cancelReconnect();
+    oublierIceConfig();
     try {
-      // Savoir à quel serveur on parle est la première question à se poser
-      // quand « ça ne marche pas ».
-      addConsole(`[WS] connexion à ${url}`);
+      // Savoir à quel serveur on parle est la première question à se poser quand ça ne marche pas.
+      // addConsole(`[WS] connexion à ${url}`);
       window.__castunnSignalUrl = url;
       socket = new WebSocket(url);
       socket.binaryType = 'arraybuffer';
@@ -668,10 +892,13 @@ function showLocalImage(url){
         type: 'join',
         room,
         ip: ip || '',
-        nick: (window.__nickname || '').trim()
+        nick: (window.__nickname || '').trim(),
+        // Envois binaires signés de leur émetteur : plusieurs pairs peuvent
+        // nous envoyer en même temps par le WebSocket sans se mélanger.
+        capacites: ['binaire-signe']
       }));
       setWsStatus('Connecté');
-      addConsole(`[WS] join envoyé (ip=${ip || 'inconnue'}) — les autres vous verront sous ce nom.`);
+      addConsole(`[WS] join envoyé (ip=${ip || 'inconnue'}), les autres vous verront sous ce nom.`);
 	  setTimeout(sendAnnounce, 500);
     };
 
@@ -703,7 +930,8 @@ function showLocalImage(url){
           lastDiscoveredHost = null;
           try { localStorage.removeItem(HOST_CACHE_KEY); } catch {}
         }
-        setTimeout(async ()=>{
+        reconnectTimer = setTimeout(async ()=>{
+          reconnectTimer = null;
           if (socket !== thisSocket) return;
           const url = await resolveSignalUrlAsync({ rescan });
           if (socket === thisSocket) createSocket(url);
@@ -713,268 +941,156 @@ function showLocalImage(url){
 
     socket.onmessage = (event)=>{
       if (wsGen !== myGen) return;
-	  
+
       try{
-        if(typeof event.data === 'string'){
-          const msg = JSON.parse(event.data);
-		  
-		  if (msg.type === 'sync') {
-		    if (ignoreMedia) return;
-		    const el = !videoPlayer.classList.contains('hidden') ? videoPlayer
-				   : !audioPlayer.classList.contains('hidden') ? audioPlayer
-		   		   : null;
-		    if (!el) return;
-		    if (msg.action === 'seek' && typeof msg.time === 'number') {
-			  const doSeek = () => { el.currentTime = msg.time; };
-			  if (el.readyState >= 1) { // HAVE_METADATA
-				doSeek();
-			  } else {
-				el.addEventListener('loadedmetadata', doSeek, { once: true });
-			  }
-			}
-			else if (msg.action === 'play')  el.play().catch(() => {});
-			else if (msg.action === 'pause') el.pause();
-		    return;
-		  }
-
-          // AJOUT pour confirmer même si récepteur désactivé
-          if (ignoreMedia && (
-            msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' ||
-            msg.type === 'file'  || msg.type === 'binary-meta'
-          )) {
-            sendConfirmation(`${userIP} a reçu ${msg.type} (WS) mais Récepteur désactivé (non lu)`);
-            // si c'est un binaire annoncé, on annule d'emblée la construction
-            if (msg.type === 'binary-meta') { wsReceiver.discard(); }
-            return;
-          }
-
-          // ==== SIGNALISATION WebRTC ====
-          // attribution d'id par le serveur
-          if (msg.type === 'hello') { myId = msg.peerId; addConsole(`[WS] hello → myId=${myId}`); return; }
-
-          // pairs déjà présents dans la room -> on appelle le premier
-          if (msg.type === 'peers') {
-            addConsole(`[WS] peers: ${msg.peers?.length||0}`);
-            if (msg.peers && msg.peers.length) {
-              peerId = msg.peers[0];
-			  // Initialise la map avec les IDs connus (IP/nick viendront par announce)
-			  // et signale ces pairs dans le tchat : sans ça on pouvait lire une
-			  // déconnexion sans avoir jamais vu la connexion correspondante.
-			  msg.peers.forEach(id => {
-			    if (peersMap.add(id)) announcePresence(id, 'present');
-			  });
-			  // On s'annonce aux pairs déjà présents
-			  sendAnnounce();
-
-              // Seul le plus grand id initie l'appel (règle simple anti-glare)
-              if (myId && peerId && myId > peerId) {
-                if (uploadInProgress) {
-                  addConsole('[RTC] pair available but upload ongoing - waiting')
-                } else {
-                  addConsole(`[WS] calling peerId=${peerId}`);
-                  startRtcAsCaller();
-                }
-              }
-            }
-            return;
-          }
-
-          // offre reçue -> on devient "callee"
-          if (msg.type === 'offer' && msg.sdp) {
-            peerId = msg.from || peerId;
-            const _pc = ensurePeerConnection(peerId);
-            if (!_pc) { addConsole('[RTC] Indispo, on reste en WS'); return; }
-
-            // Si on avait déjà une remote, on redémarre clean
-            if (_pc.signalingState !== 'stable') {
-              try { _pc.close(); } catch {}
-              pc = null; dc = null;
-            }
-            const pc2 = ensurePeerConnection(peerId);
-            pc2.setRemoteDescription({ type:'offer', sdp: msg.sdp })
-              .then(()=> pc2.createAnswer())
-              .then(answer => pc2.setLocalDescription(answer).then(()=>{
-                socket.send(JSON.stringify({ type:'answer', to: peerId, sdp: answer.sdp }));
-              }))
-              .catch(err => addConsole('[RTC] Erreur answer: '+err.message));
-            return;
-          }
-
-          // answer reçue (quand on est caller)
-          if (msg.type === 'answer' && msg.sdp) {
-            if (pc && msg.from === peerId) {
-              // Évite l'erreur "Called in wrong state: stable"
-              if (pc.signalingState !== 'stable') {
-                pc.setRemoteDescription({ type: 'answer', sdp: msg.sdp })
-                  .catch(err => addConsole('[RTC] Erreur setRemoteDescription(answer): '+err.message));
-              } else {
-                addConsole('[RTC] Ignoré: answer reçue alors que l’état est déjà stable');
-              }
-            }
-            return;
-          }
-
-          // candidats ICE
-          if (msg.type === 'ice' && msg.candidate) {
-            if (pc) {
-              pc.addIceCandidate(msg.candidate).catch(()=>{});
-            }
-            return;
-          }
-          // ==== FIN SIGNALISATION ====
-
-          // ping / pong / confirmation -> console unifiée
-          if (msg.type === 'ping') {
-            // Ne répond qu'aux pings venant d’AUTRES
-            if (msg.from && msg.from !== myId) {
-              socket.send(JSON.stringify({ type:'pong', id: msg.id, to: msg.from, from: myId, ip: userIP }));
-            }
-            return;
-          }
-
-          if (msg.type === 'pong') {
-            // N’afficher que les PONGs qui me sont destinés
-            if (msg.to === myId) {
-              addConsole(`PONG reçu de ${msg.ip || '?'} (id=${msg.id})`);
-            }
-            return;
-          }
-          if(msg.type === 'confirmation'){
-            addConsole(msg.text);
-            return;
-          }
-		  
-		  if (msg.type === 'presence') {
-		    if (msg.peerId && msg.action === 'join') {
-			  peersMap.upsert(msg.peerId, { ip: msg.ip, nick: msg.nick });
-		    }
-		    const label = peerLabel(msg.peerId, msg.peerId ? undefined : { ip: msg.ip, nick: msg.nick });
-		    if (msg.action === 'join') {
-			  addConsole(`[WS] presence: join ${label}`);
-			  announcePresence(msg.peerId, 'join');
-			  sendAnnounce?.();
-			  // Initie RTC si on a le plus grand id et pas encore de connexion
-			  if (msg.peerId && myId && myId > msg.peerId && !pc) {
-			    peerId = msg.peerId;
-			    addConsole(`[RTC] presence join → on initie (${myId} > ${msg.peerId})`);
-			    if (!uploadInProgress) startRtcAsCaller();
-			  }
-		    } else if (msg.action === 'leave') {
-			  // Complète l'identité si le serveur l'a jointe, AVANT d'afficher
-			  // et de retirer le pair de la liste.
-			  peersMap.upsert(msg.peerId, { ip: msg.ip, nick: msg.nick });
-			  addConsole(`[WS] presence: leave ${peerLabel(msg.peerId)}`);
-			  announcePresence(msg.peerId, 'leave');
-			  peersMap.remove(msg.peerId);
-			  // nettoyage de la connexion RTC si c'était notre pair actif
-			  if (msg.peerId === peerId) {
-				addConsole('[RTC] Nettoyage de connexion après départ de pair.');
-				try { pc?.close(); } catch {}
-				pc = null; dc = null; peerId = null;
-				setRtcStatus('Déconnecté');
-			  }
-			  return;
-			}
-		    return;
-	  	  }
-		  
-		  if (msg.type === 'announce') {
-			if (msg.from && msg.from !== myId) {
-			  peersMap.upsert(msg.from, { ip: msg.ip, nick: msg.nick });
-			  // L'identité arrive souvent APRÈS le "Connexion de ..." (le pair
-			  // doit d'abord récupérer son IP publique) : on corrige la ligne
-			  // déjà affichée plutôt que d'y laisser un identifiant brut.
-			  refreshPresenceLine(msg.from);
-			}
-			return;
-		  }
-
-          // TCHAT
-          // --- Dé-duplication chat (au cas où le serveur relayerait 2x) ---
-          const __seenChat = (socket.__seenChat ||= new Set());
-          if (msg.type === 'chat') {
-            const key = `${msg.from}|${msg.fromName||''}|${msg.text||''}`;
-            if (__seenChat.has(key)) return;
-            __seenChat.add(key);
-            setTimeout(()=>__seenChat.delete(key), 2000); // fenêtre 2s
-          }
-
-          if (msg.type === 'chat') {
-            // évite le doublon local
-            if (msg.from === myId) return;
-            const name = msg.fromName || msg.from;
-            appendChat({ from: name, text: msg.text || '' }, false);
-            return;
-          }
-
-          // Si désactivé, ignorer tout ce qui est média
-          if(ignoreMedia){
-            if(msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' || msg.type === 'file' ||
-               msg.type === 'audioBlob' || msg.type === 'videoBlob' || msg.type === 'imageBlob' || msg.type === 'fileBlob'){
-              return;
-            }
-          }
-
-          // annonces de blobs (ancien format)
-          if(msg.type === 'audioBlob' || msg.type === 'videoBlob' || msg.type === 'imageBlob' || msg.type === 'fileBlob'){
-            currentMime = msg.mime || '';
-            currentFilename = msg.filename || '';
-            currentKind = (msg.type||'').replace('Blob',''); // 'audio' | 'video' | 'image' | 'file'
-            wsReceiver.begin({ mime: currentMime, kind: currentKind, filename: currentFilename });
-            return;
-          }
-
-          // messages classiques URL
-          if(msg.type === 'audio'){
-            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
-            showAudio(msg.url);
-            sendConfirmation(`${userIP} a reçu l'audio (URL via WS)`);
-            return;
-          }
-          if(msg.type === 'video'){
-            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
-            showVideo(msg.url);
-            sendConfirmation(`${userIP} a reçu la vidéo (URL via WS)`);
-            return;
-          }
-          if(msg.type === 'image'){
-            if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
-            showImage(msg.url);
-            sendConfirmation(`${userIP} a reçu l'image (URL via WS)`);
-            return;
-          }
-          if(msg.type === 'stop'){
-            currentMime = ''; currentKind = ''; currentFilename='';
-            wsReceiver.stop();
-            return;
-          }
-          // --- annonce générique (nouveau format) ---
-          if (msg.type === 'binary-meta') {
-            currentMime = msg.mime || '';
-            currentFilename = msg.filename || '';
-            currentKind = (msg.kind || 'file'); // 'audio' | 'video' | 'image' | 'file'
-            wsReceiver.begin({ mime: currentMime, kind: currentKind, filename: currentFilename });
-            return;
-          }
-
-          if (msg.type === 'binary-cancel') {
-            currentMime = ''; currentKind = ''; currentFilename='';
-            wsReceiver.cancel();
-            return;
-          }
-
-          // --- fin générique (nouveau format) + ancien nom endBlob ---
-          if (msg.type === 'binary-end' || msg.type === 'endBlob') {
-            wsReceiver.end();
-            currentMime = ''; currentKind = ''; currentFilename = '';
-            return;
-          }
-
-        }else{ // Binaire
-          if(ignoreMedia){ return; }
+        if (typeof event.data !== 'string') {
+          // Binaire. Signé de son émetteur quand le serveur le sait (on l'a
+          // demandé au join) : plusieurs envois simultanés restent démêlables.
+          // Sinon, attribué au dernier envoi annoncé, comme avant.
+          if (ignoreMedia) return;
           const t = event.data?.constructor?.name;
-          if(t === 'Blob' || t === 'ArrayBuffer'){ wsReceiver.push(event.data); }
+          if (t !== 'Blob' && t !== 'ArrayBuffer') return;
+          if (serveurSait('binaire-signe')) {
+            const lu = lireBinaireSigne(event.data);
+            if (!lu) { addConsole('[WS] envoi binaire mal signé : ignoré.'); return; }
+            recevoirBinaire(lu.de, lu.donnees, 'WS');
+          } else {
+            recevoirBinaire(dernierEmetteurWs, event.data, 'WS');
+          }
+          return;
         }
+
+        const msg = JSON.parse(event.data);
+
+        // ==== SIGNALISATION ====
+        if (msg.type === 'hello') {
+          myId = msg.peerId;
+          capacitesServeur = Array.isArray(msg.capacites) ? msg.capacites : [];
+          addConsole(`[WS] hello - myId=${myId}`);
+          recevoirIceConfig(msg, { viaHello: true });
+          return;
+        }
+        // Sans `from`, c'est le serveur qui répond. Avec, c'est la demande d'un
+        // pair relayée par un ancien serveur qui ignore ce message : hors sujet.
+        if (msg.type === 'ice-config') {
+          if (!msg.from) recevoirIceConfig(msg, { viaHello: false });
+          return;
+        }
+
+        // Pairs déjà présents : un lien vers chacun de ceux que nous menons.
+        if (msg.type === 'peers') {
+          addConsole(`[WS] peers: ${msg.peers?.length || 0}`);
+          for (const id of msg.peers || []) {
+            // Signalés dans le tchat : sans ça on pouvait lire une déconnexion
+            // sans avoir jamais vu la connexion correspondante.
+            if (peersMap.add(id)) announcePresence(id, 'present');
+            relierSiNousMenons(id);
+          }
+          if (msg.peers?.length) sendAnnounce();
+          return;
+        }
+
+        // Négociation : chaque message va au lien de son pair.
+        if ((msg.type === 'offer' || msg.type === 'answer') && msg.sdp) {
+          if (msg.from) maillage.recevoirDescription(msg.from, msg.type, msg.sdp);
+          return;
+        }
+        if (msg.type === 'ice' && msg.candidate) {
+          if (msg.from) maillage.recevoirCandidat(msg.from, msg.candidate);
+          return;
+        }
+        // Le pair ne fait pas de P2P (désactivé, ou WebRTC indisponible) :
+        // on ferme notre lien naissant et on le sert par le WebSocket. Un
+        // ancien serveur diffuse ce message à toute la room : seul le
+        // destinataire désigné en tient compte.
+        if (msg.type === 'rtc-refus') {
+          if (msg.to && msg.to !== myId) return;
+          if (msg.from) {
+            maillage.fermer(msg.from);
+            marquerSansP2p(msg.from, 'n’a pas de P2P');
+          }
+          return;
+        }
+        // ==== FIN SIGNALISATION ====
+
+        // ping / pong / confirmation -> console unifiée
+        if (msg.type === 'ping') {
+          // Ne répond qu'aux pings venant d’AUTRES
+          if (msg.from && msg.from !== myId) {
+            socket.send(JSON.stringify({ type:'pong', id: msg.id, to: msg.from, from: myId, ip: userIP }));
+          }
+          return;
+        }
+        if (msg.type === 'pong') {
+          // N’afficher que les PONGs qui me sont destinés
+          if (msg.to === myId) {
+            addConsole(`PONG reçu de ${msg.ip || '?'} (id=${msg.id})`);
+          }
+          return;
+        }
+        if (msg.type === 'confirmation') {
+          addConsole(msg.text);
+          return;
+        }
+
+        if (msg.type === 'presence') {
+          const identite = { ip: msg.ip, ipDeclared: msg.ipDeclared, nick: msg.nick };
+          if (msg.peerId && msg.action === 'join') {
+            peersMap.upsert(msg.peerId, identite);
+          }
+          const label = peerLabel(msg.peerId, msg.peerId ? undefined : identite);
+          if (msg.action === 'join') {
+            addConsole(`[WS] presence: join ${label}`);
+            announcePresence(msg.peerId, 'join');
+            sendAnnounce();
+            relierSiNousMenons(msg.peerId);
+          } else if (msg.action === 'leave') {
+            // Complète l'identité si le serveur l'a jointe, AVANT d'afficher
+            // et de retirer le pair de la liste.
+            peersMap.upsert(msg.peerId, identite);
+            addConsole(`[WS] presence: leave ${peerLabel(msg.peerId)}`);
+            announcePresence(msg.peerId, 'leave');
+            // Son lien et ses transferts inachevés n'ont plus d'objet ; ce qu'il
+            // nous a déjà montré reste affiché, comme avant.
+            if (maillage.lien(msg.peerId)) addConsole(`[RTC] Lien avec ${peerLabel(msg.peerId)} fermé : départ du pair.`);
+            maillage.fermer(msg.peerId);
+            oublierRecepteurs(msg.peerId);
+            pairsSansP2p.delete(msg.peerId);
+            peersMap.remove(msg.peerId);
+          }
+          return;
+        }
+
+        if (msg.type === 'announce') {
+          if (msg.from && msg.from !== myId) {
+            peersMap.upsert(msg.from, { ip: msg.ip, ipDeclared: msg.ipDeclared, nick: msg.nick });
+            // L'identité arrive souvent APRÈS le "Connexion de ..." (le pair
+            // doit d'abord récupérer son IP publique) : on corrige la ligne
+            // déjà affichée plutôt que d'y laisser un identifiant brut.
+            refreshPresenceLine(msg.from);
+            tuiles.majLabels();
+          }
+          return;
+        }
+
+        // TCHAT
+        // --- Dé-duplication chat (au cas où le serveur relayerait 2x) ---
+        const __seenChat = (socket.__seenChat ||= new Set());
+        if (msg.type === 'chat') {
+          const key = `${msg.from}|${msg.fromName||''}|${msg.text||''}`;
+          if (__seenChat.has(key)) return;
+          __seenChat.add(key);
+          setTimeout(()=>__seenChat.delete(key), 2000); // fenêtre 2s
+          // évite le doublon local
+          if (msg.from === myId) return;
+          appendChat({ from: msg.fromName || msg.from, text: msg.text || '' }, false);
+          return;
+        }
+
+        // ==== MESSAGES D'APPLICATION ====
+        // Médias, synchronisation, arrêt : rangés par émetteur. Le serveur
+        // garantit le `from` — un pair ne peut pas parler au nom d'un autre.
+        recevoirApp(msg.from, msg, 'WS');
       }catch(err){
         recvError.textContent = `Erreur message : ${err.message}`;
         console.error(err);
@@ -1009,30 +1125,46 @@ function showLocalImage(url){
 
   let uploadInProgress = false, abortUpload = false;
 
-  // --- Transport d'upload verrouillé pour l'envoi en cours ---
-  let uploadTransport = null; // 'rtc' | 'ws' | null
+  /* --- Envoi d'un fichier dans le maillage -----------------------------------
+   * Destinataires figés au départ : en P2P ceux dont le lien est ouvert, par
+   * le WebSocket les autres, adressés. Un pair qui arrive en cours d'envoi
+   * attendra le suivant ; un lien qui tombe en cours d'envoi est abandonné
+   * pour ce fichier, et on le dit.
+   * --------------------------------------------------------------------- */
+  let envoi = null; // { p2p, ws, diffusionWs, fileId }
 
-  function beginUploadFor(file, kind) {
-    // Choix UNE FOIS pour tout l'envoi
-    uploadTransport = (typeof rtcReady === 'function' && rtcReady()) ? 'rtc' : 'ws';
+  function beginUploadFor(file, kind, { exclure = [] } = {}) {
+    const r = repartir();
+    const p2p = r.p2p.filter((id) => !exclure.includes(id));
+    const ws = r.ws.filter((id) => !exclure.includes(id));
+    // Ancien serveur, sans adressage : impossible de ne viser qu'une partie
+    // de la room par le WebSocket. Tout part alors par lui, à toute la room,
+    // comme avant — sinon les pairs P2P recevraient tout en double.
+    const diffusionWs = ws.length > 0 && !serveurSait('adressage');
+    envoi = {
+      p2p: diffusionWs ? [] : p2p,
+      ws: diffusionWs ? r.tous : ws,
+      diffusionWs,
+      fileId: nouveauMid()
+    };
 
-    // Métadonnées en JSON via WS (même si les chunks iront en RTC)
-    sendMetaOverActiveTransport({
+    const meta = {
+      type: 'binary-meta',
       filename: file.name || 'fichier',
       size: file.size || 0,
       mime: file.type || guessMimeByExt(file.name) || 'application/octet-stream',
       kind: kind || 'file',
-      fileId: crypto.randomUUID()
-    });
-  }
+      fileId: envoi.fileId,
+      mid: nouveauMid()
+    };
+    const json = JSON.stringify(meta);
+    envoi.p2p = envoi.p2p.filter((id) => maillage.envoyer(id, json));
+    if (envoi.ws.length) sendJSON(envoi.diffusionWs ? meta : { ...meta, to: envoi.ws });
 
-  function sendMetaOverActiveTransport(meta){
-    const payload = JSON.stringify({ type:'binary-meta', ...meta });
-    if (uploadTransport === 'rtc' && dc && dc.readyState === 'open') {
-      dc.send(payload);
-    } else {
-      sendJSON({ type:'binary-meta', ...meta });
-    }
+    const parties = [];
+    if (envoi.p2p.length) parties.push(`${envoi.p2p.length} en P2P`);
+    if (envoi.ws.length) parties.push(`${envoi.ws.length} par WebSocket`);
+    addConsole(`Envoi de ${meta.filename} : ${parties.join(', ') || 'aucun destinataire'}`);
   }
 
   async function sendChunk(data) {
@@ -1044,11 +1176,42 @@ function showLocalImage(url){
 
     if (!buf) throw new Error('Type chunk inattendu');
 
-    if (uploadTransport === 'rtc') {
-      dc?.send(buf);               // DataChannel
-    } else {
-      socket?.send(buf);           // WebSocket
+    for (const id of [...envoi.p2p]) {
+      if (maillage.envoyer(id, buf)) continue;
+      envoi.p2p = envoi.p2p.filter((x) => x !== id);
+      addConsole(`[RTC] ${peerLabel(id)} injoignable en cours d’envoi : fichier abandonné pour ce pair.`);
     }
+    // Le serveur relaie aux destinataires annoncés dans le binary-meta.
+    if (envoi.ws.length) socket?.send(buf);
+  }
+
+  /** Attend que chaque canal P2P de l'envoi soit redescendu sous son seuil. */
+  async function attendreCanaux() {
+    for (const id of [...envoi.p2p]) {
+      const dc = maillage.lien(id)?.dc;
+      if (!dc || dc.readyState !== 'open') continue;
+      if (dc.bufferedAmount <= dc.bufferedAmountLowThreshold) continue;
+      await new Promise((resolve) => {
+        const fini = () => {
+          clearTimeout(filet);
+          dc.removeEventListener('bufferedamountlow', fini);
+          dc.removeEventListener('close', fini);
+          resolve();
+        };
+        // Filet : un canal muet ne doit pas bloquer l'envoi aux autres.
+        const filet = setTimeout(fini, 2000);
+        dc.addEventListener('bufferedamountlow', fini);
+        dc.addEventListener('close', fini);
+      });
+    }
+  }
+
+  /** Fin ou annulation, envoyée à ceux qui ont reçu le début. */
+  function terminerEnvoi(type) {
+    const msg = { type, fileId: envoi.fileId, mid: nouveauMid() };
+    const json = JSON.stringify(msg);
+    for (const id of envoi.p2p) maillage.envoyer(id, json);
+    if (envoi.ws.length) sendJSON(envoi.diffusionWs ? msg : { ...msg, to: envoi.ws });
   }
 
   function setWsStatus(text) {
@@ -1096,30 +1259,35 @@ function showLocalImage(url){
   const btnShareScreen = document.getElementById('btnShareScreen');
 
   btnShareScreen.onclick = async () => {
-  if (!rtcReady()) {
-    ctrlError.textContent = 'RTC non connecté — le partage d\'écran nécessite une connexion P2P active avec un pair.';
+  if (!maillage.ouverts().length) {
+    // Le relais change le diagnostic : sans lui, certains réseaux ne laissent
+    // aucune chance au direct ; avec lui, c’est plutôt le pair qui manque.
+    ctrlError.textContent = 'RTC non connecté — le partage d\'écran nécessite une connexion P2P active avec un pair'
+      + ` (${raisonSansRtc()}).`;
     return;
   }
   try {
     localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
-    
+
     // 3. Affichage local (retour vidéo)
     localPlaceholder.classList.add('hidden');
     localVideo.srcObject = localStream;
     localVideo.classList.remove('hidden');
-	localVideo.muted = true; // anti Larsen
+    localVideo.muted = true; // anti Larsen
     showLocalPanel();
     localVideo.play().catch(()=>{});
 
-    // 4. Connecter la vidéo au WebRTC existant
-    if (!pc && peerId) ensurePeerConnection(peerId);
-
-    if (pc) {
-      localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
-      
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
+    // 4. Chaque pair joignable en P2P reçoit les pistes ; la renégociation
+    //    suit d'elle-même (onnegotiationneeded). Un pair qui ouvre son lien
+    //    pendant le partage les reçoit aussi (voir onOpen du maillage).
+    fluxEnDirect = localStream;
+    const p2p = maillage.ouverts();
+    for (const id of p2p) maillage.ajouterPistes(id, localStream);
+    addConsole(`[RTC] Partage d’écran : ${p2p.length} pair(s) en direct.`);
+    const sansLien = repartir().ws;
+    if (sansLien.length) {
+      addConsole(`[RTC] Sans lien P2P, pas de direct pour : ${sansLien.map((id) => peerLabel(id)).join(', ')}`
+        + ` (${raisonSansRtc()}).`);
     }
 
     // 5. Si on arrête le partage via le bouton natif de Chrome/Firefox
@@ -1132,8 +1300,13 @@ function showLocalImage(url){
 
   btnStop.onclick = ()=>{
     iAmEmitter = false;
+    // Plus aucune piste envoyée, à personne (renégociation lien par lien).
+    fluxEnDirect = null;
+    for (const lien of maillage.liens()) maillage.retirerPistes(lien.id);
     localStopAll();
-    if(sendJSON({type:'stop'})){ ctrlError.textContent=''; if(uploadInProgress) abortUpload = true; }
+    // Ce « stop » ne vise que ce que NOUS diffusons : chaque récepteur
+    // n'arrête que notre vignette, jamais celles des autres émetteurs.
+    if (sendApp({ type: 'stop' })) { ctrlError.textContent=''; if (uploadInProgress) abortUpload = true; }
   };
 
   btnPing.onclick = ()=>{
@@ -1164,57 +1337,52 @@ function showLocalImage(url){
     });
   };
   
+  // Diffusion d'un fichier en flux (captureStream). N'est appelée par aucun
+  // bouton aujourd'hui : l'envoi de fichier passe par sendBlob. Tenue à jour
+  // pour le maillage afin de rester cohérente si on la rebranche.
   async function sendMediaViaStream(file, kind) {
     iAmEmitter = true;
-    
+
     // 1. Lecture locale normale — le lecteur contrôle le fichier seul, sans concurrence
     const url = URL.createObjectURL(file);
     if (lastLocalURL) { try { URL.revokeObjectURL(lastLocalURL); } catch {} }
     lastLocalURL = url;
-    
+
     const el = kind === 'video' ? localVideo : localAudio;
     if (kind === 'video') showLocalVideo(url);
     else                  showLocalAudio(url);
-    
+
     // Attendre que les métadonnées soient chargées avant de capturer
     if (el.readyState < 1) {
         await new Promise(resolve => el.addEventListener('loadedmetadata', resolve, { once: true }));
     }
-    
-    // 2. Capture du flux et envoi via WebRTC
-    if (!pc && peerId) ensurePeerConnection(peerId);
-    
-    if (pc) {
+
+    // 2. Le flux va à chaque pair dont le lien P2P est ouvert : une connexion
+    //    échouée qui existait encore engloutissait le flux sans un mot.
+    const p2p = maillage.ouverts();
+    if (p2p.length) {
         const stream = el.captureStream();
-        
-        // Supprimer les anciens tracks média pour éviter les doublons
-        pc.getSenders()
-            .filter(s => s.track && (s.track.kind === 'video' || s.track.kind === 'audio'))
-            .forEach(s => pc.removeTrack(s));
-        
-        stream.getTracks().forEach(track => pc.addTrack(track, stream));
-        
-        // Renégocier l'offre
-        try {
-            const offer = await pc.createOffer();
-            await pc.setLocalDescription(offer);
-            socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
-            addConsole(`[RTC] Stream ${kind} envoyé via captureStream`);
-        } catch (err) {
-            addConsole('[RTC] Erreur renegociation: ' + err.message);
+        fluxEnDirect = stream;
+        for (const id of p2p) {
+            maillage.retirerPistes(id);         // pas de doublon de pistes
+            maillage.ajouterPistes(id, stream); // la renégociation suit
         }
-    } else {
-        // Pas de connexion RTC : fallback WS avec les chunks (dégradé, seek limité)
-        addConsole('[WS] Pas de RTC, envoi par chunks (seek limité sur grands fichiers)');
-        await sendBlob(file, kind);
+        addConsole(`[RTC] Stream ${kind} envoyé via captureStream (${p2p.length} pair(s))`);
+    }
+
+    // 3. Les autres reçoivent le fichier par morceaux (dégradé, seek limité).
+    const sansLien = repartir().ws;
+    if (sansLien.length || !p2p.length) {
+        addConsole(`[WS] Pas de RTC (${raisonSansRtc()}), envoi par chunks (seek limité sur grands fichiers)`);
+        await sendBlob(file, kind, { exclure: p2p });
     }
   }
 
-  async function sendBlob(file, kind) {
+  async function sendBlob(file, kind, options = {}) {
     if (uploadInProgress) throw new Error('Upload déjà en cours');
-	iAmEmitter = true;
-    // Annonce + verrou du transport
-    beginUploadFor(file, kind);
+    iAmEmitter = true;
+    // Annonce + destinataires figés pour tout l'envoi
+    beginUploadFor(file, kind, options);
 
     try{ // On active le fichier pour nous-mêmes avant de débuter son envoi (pour écouter en même temps, par ex.)
       if (kind === 'audio' || kind === 'video' || kind === 'image') {
@@ -1235,58 +1403,49 @@ function showLocalImage(url){
     const t0 = Date.now();
 
     progressBar.style.display = 'inline-block';
-    uploadInProgress = true; 
+    uploadInProgress = true;
     abortUpload = false;
 
-    // Backpressure: seuil bas si RTC
-    if (dc) { try { dc.bufferedAmountLowThreshold = 8 * CHUNK; } catch {} }
-
-    const waitForDrainRTC = () => new Promise((resolve) => {
-      if (!dc || dc.bufferedAmount <= dc.bufferedAmountLowThreshold) return resolve();
-      const onLow = ()=>{ dc.removeEventListener('bufferedamountlow', onLow); resolve(); };
-      dc.addEventListener('bufferedamountlow', onLow, { once:true });
-    });
+    // Contrôle de débit : chaque canal P2P a son propre seuil bas.
+    for (const id of envoi.p2p) {
+      const dc = maillage.lien(id)?.dc;
+      if (dc) { try { dc.bufferedAmountLowThreshold = 8 * CHUNK; } catch {} }
+    }
 
     try {
       while (!abortUpload && offset < file.size) {
-	    if (uploadTransport === 'rtc' && dc && dc.bufferedAmount > dc.bufferedAmountLowThreshold) {
-		  await waitForDrainRTC();
-	      if (abortUpload) break;
-	    }
-	    if (uploadTransport === 'ws') await waitForWsDrain();
+        await attendreCanaux();
+        if (abortUpload) break;
+        if (envoi.ws.length) await waitForWsDrain();
 
-	    const end = Math.min(offset + CHUNK, file.size);
-	    const slice = file.slice(offset, end);
-	    await sendChunk(slice);
-	    offset = end;
+        const end = Math.min(offset + CHUNK, file.size);
+        await sendChunk(file.slice(offset, end));
+        offset = end;
 
-	    // Yield event loop tous les 16 chunks (~1 Mo) pour ne pas affamer le player local
-	    if ((offset / CHUNK) % 16 === 0) await new Promise(r => setTimeout(r, 0));
+        // Yield event loop tous les 16 chunks (~1 Mo) pour ne pas affamer le player local
+        if ((offset / CHUNK) % 16 === 0) await new Promise(r => setTimeout(r, 0));
 
-	    const ratio = Math.round(100 * offset / file.size);
-	    progressText.textContent = `${ratio}%`;
-	    progressBar.value = ratio;
-	  }
-
-      if (!abortUpload && uploadTransport === 'rtc') {
-        await waitForDrainRTC();
+        const ratio = Math.round(100 * offset / file.size);
+        progressText.textContent = `${ratio}%`;
+        progressBar.value = ratio;
       }
+
+      if (!abortUpload) await attendreCanaux();
 
       // NE FINALISE QUE SI TOUT A ÉTÉ ENVOYÉ
       if (!abortUpload && offset === file.size) {
-        sendApp({ type: 'binary-end' });
+        terminerEnvoi('binary-end');
         const dt = (Date.now() - t0) / 1000;
         addConsole(`Envoi terminé (${file.name}) en ${dt.toFixed(1)}s`);
       } else {
+        terminerEnvoi('binary-cancel');
         addConsole(`Envoi annulé (${file.name})`);
-        // Optionnel : notifier explicitement l’annulation
-        sendApp({ type:'binary-cancel' });
       }
     } catch (e) {
       addConsole(`Erreur d'envoi: ${e.message}`);
     } finally {
       resetUploadUI();
-      uploadTransport = null;
+      envoi = null;
     }
   }
 
@@ -1308,9 +1467,13 @@ function showLocalImage(url){
   setErrorSink(addConsole);
   installGlobalErrorHandlers();
 
-  function sendConfirmation(text){
+  function sendConfirmation(text, to){
     if(socket?.readyState === 1){
-      socket.send(JSON.stringify({type:'confirmation', text}));
+      // À l'émetteur concerné seulement quand le serveur sait adresser ; sinon
+      // à toute la room, comme avant.
+      const msg = { type: 'confirmation', text };
+      if (to && serveurSait('adressage')) msg.to = to;
+      socket.send(JSON.stringify(msg));
       addConsole(text);
     }
   }
@@ -1358,63 +1521,8 @@ function showLocalImage(url){
   }
 
   function stopAll(){
-    try{ audioPlayer.pause(); audioPlayer.currentTime = 0; }catch{}
-    try{ videoPlayer.pause(); videoPlayer.currentTime = 0; }catch{}
-    audioPlayer.removeAttribute('src');
-    videoPlayer.removeAttribute('src');
-	try { videoPlayer.srcObject = null; } catch {}
-    audioPlayer.load();
-    videoPlayer.load();
-    audioPlayer.classList.add('hidden');
-    videoPlayer.classList.add('hidden');
-    hide(imageViewer);
-    if(lastObjectURL){ try{ URL.revokeObjectURL(lastObjectURL); }catch{}; lastObjectURL=null; }
-  }
-
-  function showAudio(url){
-    if (ignoreMedia) return;
-    hide(imageViewer);
-    videoPlayer.classList.add('hidden');
-    audioPlayer.src = url;
-    audioPlayer.classList.remove('hidden');
-    if(isActivated) audioPlayer.play().catch(e=>recvError.textContent=e.message);
-  }
-
-  function showVideo(url, mimeOpt, filenameOpt) {
-    if (ignoreMedia) return;
-    const mime = mimeOpt || currentMime || '';
-    const fname = filenameOpt || currentFilename || 'video.mp4';
-
-    // En dehors d'Electron, refuser les formats inconnus de canPlayType
-    if (mime && !isElectron() && videoPlayer.canPlayType(mime) === '') {
-      addConsole(`Vidéo non supportée (${mime}), téléchargement.`);
-      return downloadUrl(url, fname);
-    }
-
-    hide(imageViewer);
-    audioPlayer.classList.add('hidden');
-    videoPlayer.src = url;
-    videoPlayer.classList.remove('hidden');
-
-    // Fallback téléchargement si le player ne peut vraiment pas lire
-    videoPlayer.onerror = () => {
-      addConsole(`Lecture impossible (${mime || 'inconnu'}), téléchargement.`);
-      downloadUrl(url, fname);
-      videoPlayer.onerror = null;
-    };
-
-    if (isActivated) videoPlayer.play().catch(e => {
-      recvError.textContent = e.message;
-      downloadUrl(url, fname);
-    });
-  }
-
-  function showImage(url){
-    if (ignoreMedia) return;
-    audioPlayer.classList.add('hidden');
-    videoPlayer.classList.add('hidden');
-    imageViewer.src = url;
-    imageViewer.style.display = 'block';
+    // Le récepteur se désactive : toutes les vignettes s'arrêtent.
+    tuiles.arreterTout();
   }
 
   function downloadUrl(url, filename = 'fichier') {
@@ -1426,45 +1534,157 @@ function showLocalImage(url){
     a.remove();
   }
 
-  /* === Réception des médias ============================================
-   * Une seule machine à états (src/renderer/media-receiver.js), instanciée
-   * une fois par transport : les deux flux sont indépendants, mais le
-   * comportement — quoi lire, quoi télécharger, quand jeter — est commun.
+  /* === Réception des médias, rangée par émetteur ===========================
+   * Une vignette par émetteur (src/renderer/reception-tiles.js) et, pour
+   * chacun, une machine d'assemblage par transport (src/renderer/
+   * media-receiver.js). Avant, il n'y avait qu'un lecteur : deux émetteurs
+   * s'écrasaient, et le « stop » de l'un coupait l'autre.
    * ===================================================================== */
-  function makeMediaReceiver(label) {
+  const sondeVideo = document.createElement('video');
+  const peutLireVideo = (mime) => !!sondeVideo.canPlayType(mime);
+
+  const tuiles = createReceptionTiles({
+    conteneur: document.getElementById('receptions'),
+    vide: document.getElementById('receptionsVide'),
+    label: (de) => (de === 'inconnu' ? 'Émetteur inconnu' : peerLabel(de)),
+    actif: () => isActivated,
+    peutLireVideo,
+    estElectron: isElectron(),
+    telecharger: (url, nom) => downloadUrl(url, nom),
+    log: (text) => addConsole(text),
+    erreur: (text) => { recvError.textContent = text; }
+  });
+
+  function makeMediaReceiver(de, via) {
     return createMediaReceiver({
-      label,
+      label: via,
       render: (url, target, info) => {
-        if (target === 'video') showVideo(url, info.mime, info.filename);
-        else if (target === 'audio') showAudio(url);
-        else showImage(url);
+        if (target === 'video') tuiles.afficherVideo(de, url, { mime: info.mime, nom: info.filename });
+        else if (target === 'audio') tuiles.afficherAudio(de, url);
+        else tuiles.afficherImage(de, url);
       },
       download: (url, filename) => downloadUrl(url, filename),
-      canPlayVideo: (mime) => !!videoPlayer.canPlayType(mime),
+      canPlayVideo: peutLireVideo,
       log: (text) => addConsole(text),
-      confirm: (text) => sendConfirmation(`${getDisplayName()} — ${text}`),
+      confirm: (text) => sendConfirmation(`${getDisplayName()} — ${text}`, de),
       stopPlayback: () => {
-        stopAll();
+        tuiles.arreter(de);
         ctrlError.textContent = '';
         recvError.textContent = '';
       }
     });
   }
-  const wsReceiver  = makeMediaReceiver('WS');
-  const rtcReceiver = makeMediaReceiver('RTC');
 
-  function routeMediaByMime(url, mime){
-    if (mime?.startsWith('video')) showVideo(url);
-    else if (mime?.startsWith('audio')) showAudio(url);
-    else if (mime?.startsWith('image')) showImage(url);
-    else downloadUrl(url, currentFilename || 'fichier');   // <-- au lieu de showImage
+  // émetteur|transport -> machine d'assemblage
+  const recepteurs = new Map();
+  function recepteur(de, via) {
+    const cle = `${de}|${via}`;
+    let r = recepteurs.get(cle);
+    if (!r) { r = makeMediaReceiver(de, via); recepteurs.set(cle, r); }
+    return r;
+  }
+  const recepteursDe = (de) =>
+    [...recepteurs.entries()].filter(([cle]) => cle.startsWith(`${de}|`)).map(([, r]) => r);
+
+  /** Oublie les transferts en cours d'un émetteur (ou de tous). */
+  function oublierRecepteurs(de) {
+    for (const cle of [...recepteurs.keys()]) {
+      if (!de || cle.startsWith(`${de}|`)) recepteurs.delete(cle);
+    }
   }
 
-  function routeMediaByKind(url, kind){
-    if (kind === 'video') showVideo(url);
-    else if (kind === 'audio') showAudio(url);
-    else if (kind === 'image') showImage(url);
-    else downloadUrl(url, currentFilename || 'fichier');   // <-- au lieu de showImage
+  // Émetteur du dernier envoi binaire annoncé par le WebSocket : seul repère
+  // quand le serveur ne signe pas ses envois (ancien serveur).
+  let dernierEmetteurWs = 'inconnu';
+
+  /** Sépare un envoi binaire signé par le serveur : [0xCA, n, identifiant, données]. */
+  function lireBinaireSigne(donnees) {
+    const octets = new Uint8Array(donnees);
+    if (octets.length < 2 || octets[0] !== 0xCA) return null;
+    const n = octets[1];
+    if (octets.length < 2 + n) return null;
+    const de = String.fromCharCode(...octets.subarray(2, 2 + n));
+    return { de, donnees: donnees.slice(2 + n) };
+  }
+
+  // Un même message peut arriver deux fois (ancien serveur qui diffuse à toute
+  // la room alors qu'on l'a déjà reçu en P2P) : son `mid` le trahit.
+  const midsVus = new Set();
+  function dejaVu(mid) {
+    if (!mid) return false;
+    if (midsVus.has(mid)) return true;
+    midsVus.add(mid);
+    if (midsVus.size > 500) midsVus.delete(midsVus.values().next().value);
+    return false;
+  }
+
+  function appliquerSync(el, msg) {
+    if (msg.action === 'seek' && typeof msg.time === 'number') {
+      const doSeek = () => { el.currentTime = msg.time; };
+      if (el.readyState >= 1) doSeek(); // HAVE_METADATA
+      else el.addEventListener('loadedmetadata', doSeek, { once: true });
+    }
+    else if (msg.action === 'play')  el.play().catch(() => {});
+    else if (msg.action === 'pause') el.pause();
+  }
+
+  const BLOBS_ANCIENS = { audioBlob: 'audio', videoBlob: 'video', imageBlob: 'image', fileBlob: 'file' };
+  const ANNONCES_MEDIA = new Set(['audio', 'video', 'image', 'file', 'binary-meta']);
+
+  /**
+   * Un message d'application, par le WebSocket ou en P2P, traité selon son
+   * émetteur : sa vignette, son transfert en cours, sa synchronisation.
+   */
+  function recevoirApp(de, msg, via) {
+    if (!msg || dejaVu(msg.mid)) return;
+    const qui = de || 'inconnu';
+    const ancien = BLOBS_ANCIENS[msg.type];
+
+    if (msg.type === 'sync') {
+      if (ignoreMedia) return;
+      const el = tuiles.lecteur(qui);
+      if (el) appliquerSync(el, msg);
+      return;
+    }
+
+    // Récepteur désactivé : on prévient l'émetteur, et on jette.
+    if (ignoreMedia && (ANNONCES_MEDIA.has(msg.type) || ancien)) {
+      sendConfirmation(`${userIP} a reçu ${msg.type} (${via}) mais Récepteur désactivé (non lu)`, de);
+      if (msg.type === 'binary-meta' || ancien) recepteur(qui, via).discard();
+      return;
+    }
+
+    if (msg.type === 'binary-meta' || ancien) {
+      if (via === 'WS') dernierEmetteurWs = qui;
+      recepteur(qui, via).begin({ mime: msg.mime, kind: msg.kind || ancien || 'file', filename: msg.filename });
+      return;
+    }
+    if (msg.type === 'binary-cancel') { recepteur(qui, via).cancel(); return; }
+    if (msg.type === 'binary-end' || msg.type === 'endBlob') { recepteur(qui, via).end(); return; }
+
+    if (msg.type === 'stop') {
+      // Seul ce qui vient de cet émetteur s'arrête : ses transferts en cours,
+      // sa vignette. Ce que les autres nous diffusent continue.
+      for (const r of recepteursDe(qui)) r.discard();
+      tuiles.arreter(qui);
+      ctrlError.textContent = '';
+      recvError.textContent = '';
+      sendConfirmation(`${getDisplayName()} — Stop reçu (${via})`, de);
+      return;
+    }
+
+    if ((msg.type === 'audio' || msg.type === 'video' || msg.type === 'image') && msg.url) {
+      if (msg.type === 'audio') tuiles.afficherAudio(qui, msg.url);
+      else if (msg.type === 'video') tuiles.afficherVideo(qui, msg.url);
+      else tuiles.afficherImage(qui, msg.url);
+      const quoi = msg.type === 'audio' ? "l'audio" : msg.type === 'video' ? 'la vidéo' : "l'image";
+      sendConfirmation(`${userIP} a reçu ${quoi} (URL via ${via})`, de);
+    }
+  }
+
+  function recevoirBinaire(de, donnees, via) {
+    if (ignoreMedia) return;
+    recepteur(de || 'inconnu', via).push(donnees);
   }
 
   function hide(el){ el.style.display='none'; }
@@ -1485,7 +1705,10 @@ function showLocalImage(url){
 	  }
 	  function closeModal(){ modal.setAttribute('aria-hidden','true'); }
 
-	  btn.addEventListener('click', openModal);
+	  // Passe par une lambda : plus bas, `openModal` est réassigné pour rafraîchir
+	  // l'état du serveur local. Avec `openModal` en référence directe, l'écouteur
+	  // gardait l'ancienne fonction et ce rafraîchissement n'avait jamais lieu.
+	  btn.addEventListener('click', () => openModal());
 	  cancel.addEventListener('click', closeModal);
 	  modal.addEventListener('click', (e)=>{ if(e.target === modal) closeModal(); });
 	  window.addEventListener('keydown', (e)=>{ if(e.key === 'Escape' && modal.getAttribute('aria-hidden')==='false') closeModal(); });
@@ -1548,124 +1771,193 @@ function showLocalImage(url){
 		const _origOpen = openModal;
 		openModal = () => { _origOpen(); refreshServerState(); };
 	  }
+
+	  // Ouverture des ports du routeur (Electron seulement). L’état évolue seul
+	  // — découverte, puis renouvellement toutes les 30 min — d’où l’abonnement
+	  // plutôt qu’une lecture ponctuelle.
+	  const portForwardingRow    = document.getElementById('portForwardingRow');
+	  const chkPortForwarding    = document.getElementById('chkPortForwarding');
+	  const portForwardingStatus = document.getElementById('portForwardingStatus');
+	  const portForwardingLabel  = document.getElementById('portForwardingLabel');
+
+	  if (window.portForwarding) {
+		portForwardingRow.style.display = '';
+		let dernierMessage = '';
+
+		const afficherEtat = (etat) => {
+		  if (!etat) return;
+		  chkPortForwarding.checked = !!etat.actif;
+		  portForwardingLabel.textContent =
+		    `Ouvrir automatiquement les ports UDP ${etat.min}-${etat.max} (UPnP / NAT-PMP)`;
+		  portForwardingStatus.textContent = etat.message || '';
+		  portForwardingStatus.style.color =
+		    etat.statut === 'ouvert' && !etat.nonRoutable ? 'var(--ok)'
+		    : etat.statut === 'partiel' || etat.nonRoutable ? 'var(--warn)'
+		    : '#7f849a';
+		  // Une ligne de console par changement réel, pas à chaque renouvellement.
+		  if (etat.message && etat.message !== dernierMessage) {
+		    dernierMessage = etat.message;
+		    addConsole(etat.message);
+		  }
+		};
+
+		window.portForwarding.onChange(afficherEtat);
+		window.portForwarding.status().then(afficherEtat).catch((e) => reportError('état de l’ouverture des ports', e));
+
+		// Appliqué tout de suite, sans attendre « Enregistrer » : décocher doit
+		// rendre les ports immédiatement.
+		chkPortForwarding.addEventListener('change', async () => {
+		  chkPortForwarding.disabled = true;
+		  try {
+		    afficherEtat(await window.portForwarding.setEnabled(chkPortForwarding.checked));
+		  } catch (e) {
+		    reportError('réglage de l’ouverture des ports', e);
+		  } finally {
+		    chkPortForwarding.disabled = false;
+		  }
+		});
+	  }
   })();
 
-  function ensurePeerConnection(targetId){
-    if (pc) return pc;
-
-    if (!hasWebRTC()) {
-      setRtcStatus('Indisponible');
-      addConsole('[RTC] Non disponible, probablement en raison du contexte.');
-      return null;
+  /** Envoi d’un message de signalisation : sans socket ouverte, rien ne part. */
+  function sendSignal(msg) {
+    if (socket?.readyState !== WebSocket.OPEN) {
+      addConsole(`[RTC] Signalisation impossible (${msg.type}) : WebSocket fermé.`);
+      return false;
     }
+    socket.send(JSON.stringify(msg));
+    return true;
+  }
 
-    setRtcStatus('Connexion...');
-    pc = new RTCPeerConnection({
-      iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-    });
+  /** RTC permis ici : ni désactivé par un mode de test, ni hors contexte sûr. */
+  function rtcPermis() {
+    return !SANS_RTC && hasWebRTC();
+  }
+  const pairsSansRtcSignales = new Set();
+  // Pairs qui ne font pas de P2P (refus explicite, ou offre restée sans
+  // réponse) : servis par le WebSocket, on ne retente pas de lien.
+  const pairsSansP2p = new Set();
 
-    pc.onicecandidate = (e)=>{
-      if (e.candidate && targetId) {
-        socket.send(JSON.stringify({ type: 'ice', to: targetId, candidate: e.candidate }));
+  function marquerSansP2p(id, pourquoi) {
+    pairsSansP2p.add(id);
+    addConsole(`[RTC] ${peerLabel(id)} ${pourquoi} : servi par le WebSocket.`);
+    majPastilleRtc();
+  }
+
+  /** Configuration ICE d'un lien : deux STUN, le relais annoncé, la politique. */
+  function configIce(turn) {
+    const config = {
+      // ICE essaie seul le direct d'abord, le relais ensuite ; forceRelay
+      // (mode de test) ne garde que les candidats relais.
+      iceServers: buildIceServers(turn),
+      iceTransportPolicy: FORCE_RELAY ? 'relay' : 'all'
+    };
+    // Diagnostic, comme __castunnSignalUrl : avec quels serveurs ICE les liens
+    // sont-ils créés ? Les URL seulement, jamais les identifiants.
+    window.__castunnIceUrls = config.iceServers.flatMap((s) => [].concat(s.urls));
+    return config;
+  }
+
+  /* === Maillage WebRTC (src/renderer/rtc-mesh.js) ==========================
+   * Un lien par pair de la room. Le plus grand identifiant ouvre le lien
+   * (règle anti-collision existante), l'autre attend son offre.
+   * ===================================================================== */
+  const maillage = createMesh({
+    RTCPeerConnection: window.RTCPeerConnection,
+    myId: () => myId,
+    disponible: (id) => {
+      if (rtcPermis()) return true;
+      if (!pairsSansRtcSignales.has(id)) {
+        pairsSansRtcSignales.add(id);
+        addConsole(SANS_RTC
+          ? '[RTC] désactivé par ?rtc=off (mode de test) : tout passe par le WebSocket.'
+          : '[RTC] Non disponible, probablement en raison du contexte.');
       }
-    };
+      majPastilleRtc();
+      return false;
+    },
+    config: () => configIce(iceConfig.turn),
+    // Un relais mal configuré ne doit pas priver de la connexion directe.
+    configSecours: () => configIce([]),
+    preparer: () => preparerIceConfig(),
+    signal: (msg) => sendSignal(msg),
+    label: (id) => peerLabel(id),
+    log: (text) => addConsole(text),
+    report: (contexte, e) => reportError(contexte, e),
+    onChange: () => majPastilleRtc(),
+    onOpen: (id) => {
+      majPastilleRtc();
+      // Un pair dont le lien s'ouvre pendant un partage d'écran le reçoit aussi.
+      if (fluxEnDirect) maillage.ajouterPistes(id, fluxEnDirect);
+    },
+    onConnected: (id, lien) => logRtcPath(id, lien),
+    onMessage: (id, data) => recevoirViaRtc(id, data),
+    onTrack: (id, ev) => recevoirPiste(id, ev),
+    refuser: (id) => sendSignal({ type: 'rtc-refus', to: id }),
+    sansReponse: (id) => marquerSansP2p(id, 'ne répond pas en P2P')
+  });
 
-    pc.onconnectionstatechange = () => {
-	  const s = pc.connectionState;
-	  addConsole(`[RTC] PeerConnection: ${s}`);
-	  if (s === 'connected') setRtcStatus('Connecté');
-	  else if (s === 'connecting' || s === 'checking') setRtcStatus('Connexion...');
-	  else if (s === 'failed') {
-		setRtcStatus('Déconnecté');
-		addConsole('[RTC] Échec — restartIce...');
-		try { pc.restartIce(); } catch {}
-		// Recréation complète si restartIce ne suffit pas
-		setTimeout(() => {
-		  if (!rtcReady() && peerId) {
-			addConsole('[RTC] Recréation complète...');
-			try { pc?.close(); } catch {}
-			pc = null; dc = null;
-			startRtcAsCaller();
-		  }
-		}, 3000);
-	  }
-	  else if (s === 'disconnected' || s === 'closed') setRtcStatus('Déconnecté');
-	};
-
-    // Si on est "callee", on recevra le canal ici
-    pc.ondatachannel = (ev)=>{
-      dc = ev.channel;
-      setupDataChannel();
-    };
-	
-	// Réception d'un flux vidéo
-	pc.ontrack = (ev) => {
-		if (ignoreMedia) return;
-		
-		// On vérifie qu'on n'est pas déjà en train de lire CE flux exact
-		if (videoPlayer.srcObject !== ev.streams[0]) {
-		  hide(imageViewer);
-		  audioPlayer.classList.add('hidden');
-		  
-		  videoPlayer.srcObject = ev.streams[0];
-		  videoPlayer.classList.remove('hidden');
-		  
-		  if (isActivated) {
-			// On lance la lecture, et on ignore l'erreur d'interruption (AbortError) si elle survient
-			videoPlayer.play().catch(e => {
-			  if (e.name !== 'AbortError') recvError.textContent = e.message;
-			});
-		  }
-		  sendConfirmation(`${userIP} a reçu le flux écran en direct (RTC)`);
-		}
-    };
-    return pc;
+  /** Ouvre le lien vers un pair si c'est à nous de mener. */
+  function relierSiNousMenons(id) {
+    if (!id || !myId || myId <= id || pairsSansP2p.has(id)) return;
+    addConsole(`[RTC] Lien vers ${peerLabel(id)} : nous menons (${myId} > ${id}).`);
+    maillage.connecter(id);
   }
 
-  function setupDataChannel(){
-    if (!dc) return;
-    try { dc.binaryType = 'arraybuffer'; } catch {}
-    dc.bufferedAmountLowThreshold = 512 * 1024;
-    dc.onopen = ()=> setRtcStatus('Connecté');
-    dc.onclose = () => {
-	  setRtcStatus('Déconnecté');
-	  if (peerId) setTimeout(() => {
-		if (!rtcReady()) {
-		  addConsole('[RTC] DataChannel fermé, tentative de reconnexion...');
-		  try { pc?.close(); } catch {}
-		  pc = null; dc = null;
-		  startRtcAsCaller();
-		}
-	  }, 2000);
-	};
-    dc.onmessage = (ev)=> handleRtcIncoming(ev.data);
+  /**
+   * Ce que le lien avec un pair a réellement emprunté, une fois établi.
+   *
+   * Sans cette trace, impossible de savoir si l'on est en direct ou via un
+   * relais, ni si la plage UDP fixe est bien respectée. La pastille en tire sa
+   * couleur : verte en direct, jaune-orangé par un relais.
+   */
+  async function logRtcPath(id, lien) {
+    try {
+      const chemin = describeRtcPath(await lien.pc.getStats());
+      if (lien.ferme) return;
+      lien.chemin = chemin;
+      addConsole(`[RTC] chemin : ${formatRtcPath(chemin)} — avec ${peerLabel(id)}`);
+      majPastilleRtc();
+      journaliserCollecte(id, lien);
+    } catch (e) {
+      reportError('lecture des statistiques RTC', e);
+    }
   }
 
-  function waitForDrain() {
-    return new Promise(resolve => {
-      if (!rtcReady() || dc.bufferedAmount <= dc.bufferedAmountLowThreshold) return resolve();
-      const h = () => { dc.removeEventListener('bufferedamountlow', h); resolve(); };
-      dc.addEventListener('bufferedamountlow', h, { once: true });
-    });
+  /**
+   * Les candidats collectés localement pour un lien, une fois la collecte
+   * terminée.
+   *
+   * Pas avant : en réseau local, la connexion directe s’établit avant même
+   * que STUN ou le relais aient répondu, et l’on annonçait alors « aucune
+   * adresse publique » à tort. Dix secondes au plus : au-delà, un STUN muet
+   * est un vrai renseignement.
+   */
+  async function journaliserCollecte(id, lien) {
+    const connexion = lien.pc;
+    if (connexion.iceGatheringState !== 'complete') {
+      await new Promise((resolve) => {
+        const fin = () => {
+          if (connexion.iceGatheringState !== 'complete') return;
+          clearTimeout(minuteur);
+          connexion.removeEventListener('icegatheringstatechange', fin);
+          resolve();
+        };
+        const minuteur = setTimeout(() => {
+          connexion.removeEventListener('icegatheringstatechange', fin);
+          resolve();
+        }, 10000);
+        connexion.addEventListener('icegatheringstatechange', fin);
+      });
+    }
+    if (lien.ferme) return; // lien remplacé entre-temps : plus notre affaire
+    const complete = connexion.iceGatheringState === 'complete';
+    // Connexion directe : Chromium a cessé de collecter, rien à diagnostiquer.
+    const ecourtee = !!lien.chemin?.trouve && !lien.chemin.relaye;
+    const resume = describeCollectes(summarizeGathered(lien.collecte), { complete, ecourtee });
+    addConsole(`[RTC] candidats locaux : ${resume} — lien avec ${peerLabel(id)}`);
   }
 
-  function waitForDrainRTC(timeoutMs = 2000) {
-    return new Promise(resolve => {
-      if (!rtcReady()) return resolve();
-      // si déjà sous le seuil: resolve immédiat
-      if (dc.bufferedAmount <= (dc.bufferedAmountLowThreshold || 0)) return resolve();
-
-      let settled = false;
-      const done = () => { if (!settled) { settled = true; resolve(); } };
-
-      const onLow = () => { dc.removeEventListener('bufferedamountlow', onLow); done(); };
-      dc.addEventListener('bufferedamountlow', onLow, { once: true });
-
-      // filet de sécurité si jamais l'event ne vient pas
-      setTimeout(done, timeoutMs);
-    });
-  }
-  
   function waitForWsDrain() {
     return new Promise(resolve => {
       if (!socket || socket.bufferedAmount < 4 * 1024 * 1024) return resolve();
@@ -1677,108 +1969,38 @@ function showLocalImage(url){
     });
   }
 
-  async function startRtcAsCaller(){
-    if (!ensurePeerConnection(peerId)) return;
-    // Canal principal pour fichiers/messages app
-    dc = pc.createDataChannel('file', { ordered: true });
-    if (dc) dc.binaryType = 'arraybuffer'; 
-    setupDataChannel();
-    try{
-      const offer = await pc.createOffer();
-      await pc.setLocalDescription(offer);
-      socket.send(JSON.stringify({ type: 'offer', to: peerId, sdp: offer.sdp }));
-    }catch(err){
-      addConsole('[RTC] Erreur offer: '+err.message);
+  /**
+   * Réception en P2P : l'émetteur est le pair au bout du lien. Mêmes messages
+   * que par le WebSocket, traités par le même chemin (recevoirApp).
+   */
+  function recevoirViaRtc(de, data) {
+    try {
+      if (typeof data === 'string') {
+        const msg = JSON.parse(data);
+        if (msg.type === 'chat') {
+          if (msg.from === myId) return; // évite le doublon
+          appendChat({ from: msg.fromName || msg.from || peerLabel(de), text: msg.text || '' }, false);
+          return;
+        }
+        recevoirApp(de, msg, 'RTC');
+        return;
+      }
+      const t = data?.constructor?.name;
+      if (t === 'Blob' || t === 'ArrayBuffer') recevoirBinaire(de, data, 'RTC');
+    } catch (e) {
+      recvError.textContent = `Erreur RTC : ${e.message}`;
+      console.error(e);
     }
   }
 
-  // Réception côté RTC (mêmes types que WS : binary-meta, endBlob, stop, chat,
-  // audio/video/image...). L'assemblage est délégué à rtcReceiver, jumeau de
-  // wsReceiver : plus de variables d'état parallèles ni de logique dupliquée.
-  function handleRtcIncoming(data){
-    try{
-      if (typeof data === 'string') {
-        const msg = JSON.parse(data);
-		
-        // AJOUT pour confirmer côté RTC même si récepteur désactivé
-        if (ignoreMedia && (
-          msg.type === 'audio' || msg.type === 'video' || msg.type === 'image' ||
-          msg.type === 'file'  || msg.type === 'binary-meta'
-        )) {
-          sendConfirmation(`${userIP} a reçu ${msg.type} (RTC) mais Récepteur désactivé (non lu)`);
-          if (msg.type === 'binary-meta') { rtcReceiver.discard(); }
-          return;
-        }
-
-        if (msg.type === 'stop') {
-          rtcReceiver.stop();
-          return;
-        }
-        if (msg.type === 'binary-meta') {
-          rtcReceiver.begin({ mime: msg.mime, kind: msg.kind, filename: msg.filename });
-          return;
-        }
-
-        if (msg.type === 'binary-cancel') {
-          rtcReceiver.cancel();
-          return;
-        }
-
-        if (msg.type === 'binary-end' || msg.type === 'endBlob') {
-          rtcReceiver.end();
-          return;
-        }
-
-        // autres messages app (audio/url, video/url, image/url, chat si tu veux l’y faire passer)
-        if (msg.type === 'audio' && msg.url) {
-			showAudio(msg.url);
-			sendConfirmation(`${userIP} a reçu l'audio (URL via RTC)`);
-			return;
-		}
-        else if (msg.type === 'video' && msg.url) {
-			showVideo(msg.url);
-			sendConfirmation(`${userIP} a reçu la vidéo (URL via RTC)`);
-			return;
-		}
-        else if (msg.type === 'image' && msg.url) {
-			showImage(msg.url);
-			sendConfirmation(`${userIP} a reçu l'image (URL via RTC)`);
-			return;
-		}
-        else if (msg.type === 'chat') {
-          if (msg.from === myId) return; // évite le doublon
-          const name = msg.fromName || msg.from;
-          appendChat({ from: name, text: msg.text || '' }, false);
-          return;
-        } // si tu veux relayer le chat en RTC
-		else if (msg.type === 'sync') {
-		  if (ignoreMedia) return;
-		  const el = !videoPlayer.classList.contains('hidden') ? videoPlayer
-             : !audioPlayer.classList.contains('hidden') ? audioPlayer
-             : null;
-		  if (!el) return;
-		  if (msg.action === 'seek' && typeof msg.time === 'number') {
-		    const doSeek = () => { el.currentTime = msg.time; };
-		    if (el.readyState >= 1) { // HAVE_METADATA
-			  doSeek();
-		    } else {
-		      el.addEventListener('loadedmetadata', doSeek, { once: true });
-		    }
-		  }
-		  else if (msg.action === 'play')  el.play().catch(() => {});
-		  else if (msg.action === 'pause') el.pause();
-		  return;
-		}
-        return;
-      }
-
-      // Binaire (chunks)
-      if (ignoreMedia) return;
-      const t = data?.constructor?.name;
-      if (t === 'Blob' || t === 'ArrayBuffer') rtcReceiver.push(data);
-    }catch(e){
-      recvError.textContent = `Erreur RTC : ${e.message}`;
-      console.error(e);
+  /** Flux en direct reçu (partage d'écran) : dans la vignette de son émetteur. */
+  function recevoirPiste(de, ev) {
+    if (ignoreMedia) return;
+    const flux = ev.streams[0];
+    if (!flux) return;
+    // Une piste audio et une piste vidéo arrivent séparément : un seul accusé.
+    if (tuiles.afficherFlux(de, flux)) {
+      sendConfirmation(`${userIP} a reçu le flux écran en direct (RTC)`, de);
     }
   }
 	
@@ -1787,6 +2009,17 @@ function showLocalImage(url){
   emitterCard.classList.add('hidden');
   deactivate();
   if (!window.__nickname) window.__nickname = userNick;
+
+  // Plage de ports UDP de WebRTC (Electron seulement) : une plage saturée
+  // dégrade les connexions sans rien dire, autant l'afficher.
+  window.rtcPorts?.status().then((p) => {
+    if (!p) return;
+    addConsole(`[RTC] ports UDP ${p.min}-${p.max} : ${p.libres}/${p.total} libres`
+      + (p.suffisant ? '' : ' — trop peu, d’autres programmes occupent la plage'));
+  }).catch((e) => reportError('état des ports UDP', e));
+
+  if (FORCE_RELAY) addConsole('[TEST] relais forcé (forceRelay=1) : seules les connexions par relais TURN sont tentées.');
+  if (SANS_RTC) addConsole('[TEST] RTC désactivé (rtc=off) : tout passe par le WebSocket.');
 
   // Témoin de bon chargement, relevé par le garde-fou ci-dessous.
   window.__castunnReady = true;
