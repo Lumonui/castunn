@@ -66,14 +66,14 @@ app.whenReady().then(async () => {
 
   await check('l’ouverture de ports répond, neutralisée pendant les tests', async () => {
     const e = await invoke('port-forwarding-status');
-    assert(e.min === 26100 && e.max === 26129 && e.total === 30, 'plage : ' + JSON.stringify(e));
+    assert(e.min === 26100 && e.max === 26111 && e.total === 12, 'première fenêtre : ' + JSON.stringify(e));
     assert(typeof e.message === 'string' && e.message.startsWith('UPnP'), 'message : ' + e.message);
     assert(!/ouverts|partiel/.test(e.message), 'aucun port ne doit avoir été ouvert : ' + e.message);
   });
 
   await check('webrtc-ports décrit la plage réservée', async () => {
     const p = await invoke('webrtc-ports');
-    assert(p.total === 30 && p.libres >= 0 && p.libres <= 30, JSON.stringify(p));
+    assert(p.min === 26100 && p.total === 60 && p.libres >= 0 && p.libres <= 60, JSON.stringify(p));
   });
 
   // La vraie fenêtre, avec le vrai preload : la case des Paramètres doit
@@ -96,7 +96,8 @@ app.whenReady().then(async () => {
       return t.includes('CASTUNN_SANS_UPNP') ? t : null;
     }, 'état affiché');
     const label = await page(`document.getElementById('portForwardingLabel').textContent`);
-    assert(label.includes('26100-26129'), 'plage affichée : ' + label);
+    // La plage tenue change en cours de route : le libellé n'en parle pas.
+    assert(label.includes('ports UDP de Castunn') && !/\d{5}/.test(label), 'libellé : ' + label);
     const log = await page(`document.getElementById('consoleLog').textContent`);
     assert(log.includes(statut), 'l’état figure aussi dans la console de l’app');
   });

@@ -1,8 +1,11 @@
 const { app, BrowserWindow, desktopCapturer, session, ipcMain, dialog } = require('electron');
 const { fork, execFile } = require('child_process');
-const { WEBRTC_UDP_PORTS, etatPortsWebRTC, appliquerPlageWebRTC } = require('./webrtc-ports.js');
+const {
+  WEBRTC_UDP_PORTS, etatPortsWebRTC, appliquerPlageWebRTC, plageChromium, debutValide
+} = require('./webrtc-ports.js');
 const { OuverturePorts } = require('./port-forwarding.js');
 const { trouverPasserelle, adresseLocaleVers } = require('./nat-mapper.js');
+const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const https = require('https');
@@ -29,8 +32,11 @@ const SERVER_PORT = 8080;
  * À faire AVANT app.whenReady() : après, le profil est déjà ouvert.
  * ========================================================================== */
 /** Renvoie true pour l’instance principale (celle du profil de base). */
+// Profil de la première instance : les autres y lisent sa fenêtre de ports.
+const profilDeBase = app.getPath('userData');
+
 function claimOwnUserDataDir() {
-  const base = app.getPath('userData');
+  const base = profilDeBase;
   for (let n = 2; !app.requestSingleInstanceLock(); n++) {
     if (n > 8) { // garde-fou : jamais de boucle infinie au démarrage
       console.warn('[profil] aucun profil libre, profil partagé (démarrage lent possible)');
@@ -320,24 +326,56 @@ let ouverturePorts = null;
  */
 function creerOuverturePorts() {
   const neutralise = process.env.CASTUNN_SANS_UPNP === '1';
-  // Deux instances sur la même machine ont la même adresse locale : la
-  // seconde « réécrirait » les redirections de la première sans conflit, et
-  // la première à quitter rendrait des ports dont l’autre se sert encore.
-  // Une seule gère donc le routeur : celle du profil de base.
-  const raison = neutralise ? 'désactivé par CASTUNN_SANS_UPNP'
-    : !instancePrincipale ? 'géré par la première instance de Castunn'
-    : '';
   const dossier = neutralise
     ? path.join(os.tmpdir(), `castunn-test-${process.pid}`)
     : app.getPath('userData');
   return new OuverturePorts({
     plage: WEBRTC_UDP_PORTS,
     fichierReglages: path.join(dossier, 'castunn-settings.json'),
-    trouverPasserelle: raison
-      ? async () => { throw new Error(raison); }
+    trouverPasserelle: neutralise
+      ? async () => { throw new Error('désactivé par CASTUNN_SANS_UPNP'); }
       : () => trouverPasserelle(),
-    adresseLocaleVers
+    adresseLocaleVers,
+    // Une seule instance par machine parle au routeur : celle du profil de base
+    // (voir port-forwarding.js).
+    delegue: !neutralise && !instancePrincipale
   });
+}
+
+/* ==========================================================================
+ * Plage UDP de Chromium.
+ *
+ * Elle suit le début de la fenêtre de ports que la machine tient sur la box
+ * (voir webrtc-ports.js et port-forwarding.js), et se change à chaud : les
+ * connexions suivantes la prennent, les autres gardent leur port.
+ * ========================================================================== */
+let plageCourante = plageChromium();
+
+function appliquerPlagePartout(plage) {
+  if (plage.min === plageCourante.min && plage.max === plageCourante.max) return;
+  plageCourante = plage;
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) appliquerPlageWebRTC(w.webContents, plage);
+  }
+  console.log(`[webrtc] plage UDP ${plage.min}-${plage.max} appliquée.`);
+}
+
+/**
+ * Instance secondaire : elle ne parle pas au routeur, mais ses connexions
+ * passent par la même box. Elle prend donc la fenêtre de la première instance,
+ * notée dans les réglages de celle-ci, et la suit si elle change.
+ */
+function suivrePlageDeLaPremiereInstance() {
+  const fichier = path.join(profilDeBase, 'castunn-settings.json');
+  const lire = () => {
+    try {
+      const d = JSON.parse(fs.readFileSync(fichier, 'utf8')).ouverturePorts?.debutPlage;
+      return debutValide(d) ? d : WEBRTC_UDP_PORTS.min;
+    } catch { return WEBRTC_UDP_PORTS.min; }
+  };
+  const suivre = () => appliquerPlagePartout(plageChromium(lire()));
+  suivre();
+  fs.watchFile(fichier, { interval: 2000, persistent: false }, suivre);
 }
 
 function killServer() {
@@ -362,8 +400,8 @@ function createWindow() {
 
   // Plage UDP fixe : sans elle, Chromium pioche au hasard dans les ports
   // éphémères et aucune ouverture de routeur ne peut viser juste.
-  if (appliquerPlageWebRTC(win.webContents)) {
-    console.log(`[webrtc] plage UDP ${WEBRTC_UDP_PORTS.min}-${WEBRTC_UDP_PORTS.max} appliquée.`);
+  if (appliquerPlageWebRTC(win.webContents, plageCourante)) {
+    console.log(`[webrtc] plage UDP ${plageCourante.min}-${plageCourante.max} appliquée.`);
   }
 
   // Modes de test de la page (voir castunn.html) : on ne tape pas d'URL dans
@@ -387,10 +425,12 @@ app.whenReady().then(() => {
   ipcMain.handle('server-stop',   () => killServer());
 
   // État de la plage UDP, pour que la console de l’app puisse le dire.
-  ipcMain.handle('webrtc-ports', () => etatPortsWebRTC());
+  ipcMain.handle('webrtc-ports', () => etatPortsWebRTC(plageCourante));
 
   // Ouverture automatique de la plage UDP sur le routeur (UPnP / NAT-PMP).
   ouverturePorts = creerOuverturePorts();
+  ouverturePorts.on('plage', appliquerPlagePartout);
+  if (!instancePrincipale && process.env.CASTUNN_SANS_UPNP !== '1') suivrePlageDeLaPremiereInstance();
   ouverturePorts.on('etat', (etat) => {
     console.log('[UPnP]', etat.message);
     for (const w of BrowserWindow.getAllWindows()) {
@@ -428,10 +468,10 @@ app.whenReady().then(() => {
 
   createWindow();
 
-  // Diagnostic différé : sonder trente ports prend un instant, et rien
+  // Diagnostic différé : sonder soixante ports prend un instant, et rien
   // n’en dépend pour démarrer.
-  etatPortsWebRTC().then((e) => {
-    const ligne = `[webrtc] ports UDP ${e.min}-${e.max} : ${e.libres}/${e.total} libres`;
+  etatPortsWebRTC(plageCourante).then((e) => {
+    const ligne = `[webrtc] ports UDP ${e.min}-${e.max} : ${e.libres}/${e.total} inutilisés sur cette machine`;
     if (e.suffisant) console.log(ligne);
     else console.warn(`${ligne} — trop peu, d’autres programmes occupent la plage.`);
   }).catch((err) => console.warn('[webrtc] sondage des ports impossible :', err.message));

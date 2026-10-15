@@ -1782,7 +1782,6 @@ function showLocalImage(url){
 	  const portForwardingRow    = document.getElementById('portForwardingRow');
 	  const chkPortForwarding    = document.getElementById('chkPortForwarding');
 	  const portForwardingStatus = document.getElementById('portForwardingStatus');
-	  const portForwardingLabel  = document.getElementById('portForwardingLabel');
 
 	  if (window.portForwarding) {
 		portForwardingRow.style.display = '';
@@ -1791,8 +1790,10 @@ function showLocalImage(url){
 		const afficherEtat = (etat) => {
 		  if (!etat) return;
 		  chkPortForwarding.checked = !!etat.actif;
-		  portForwardingLabel.textContent =
-		    `Ouvrir automatiquement les ports UDP ${etat.min}-${etat.max} (UPnP / NAT-PMP)`;
+		  // Instance secondaire : c'est la première qui décide.
+		  chkPortForwarding.disabled = etat.statut === 'delegue';
+		  // La plage tenue change en cours de route (fenêtres de 12 ports) :
+		  // c'est la ligne d'état qui la donne, pas le libellé.
 		  portForwardingStatus.textContent = etat.message || '';
 		  portForwardingStatus.style.color =
 		    etat.statut === 'ouvert' && !etat.nonRoutable ? 'var(--ok)'
@@ -2018,7 +2019,10 @@ function showLocalImage(url){
   // dégrade les connexions sans rien dire, autant l'afficher.
   window.rtcPorts?.status().then((p) => {
     if (!p) return;
-    addConsole(`[RTC] ports UDP ${p.min}-${p.max} : ${p.libres}/${p.total} libres`
+    // « Libres » au sens de la machine : aucun programme ne s'en sert encore.
+    // Rien à voir avec les redirections de la box, qui réservent des ports
+    // sans les occuper.
+    addConsole(`[RTC] ports UDP ${p.min}-${p.max} : ${p.libres}/${p.total} inutilisés sur cette machine`
       + (p.suffisant ? '' : ' — trop peu, d’autres programmes occupent la plage'));
   }).catch((e) => reportError('état des ports UDP', e));
 

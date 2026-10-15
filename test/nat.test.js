@@ -18,9 +18,12 @@ const path = require('path');
 
 const nat = require('../nat-mapper.js');
 const {
-  OuverturePorts, redirectionsPerimees, bilanOuverture, messageEtat, adresseRoutable
+  OuverturePorts, redirectionsPerimees, bilanOuverture, messageEtat, adresseRoutable,
+  fenetrePrise, decisionFenetres, decouper
 } = require('../port-forwarding.js');
-const { WEBRTC_UDP_PORTS } = require('../webrtc-ports.js');
+const {
+  WEBRTC_UDP_PORTS, plageChromium, debutValide, portsOccupes, udpPortLibre
+} = require('../webrtc-ports.js');
 
 const results = [];
 async function test(nom, fn) {
@@ -36,7 +39,9 @@ const pause = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const MOI = '192.168.1.16';
 const PLAGE = WEBRTC_UDP_PORTS;
-const TOTAL = PLAGE.max - PLAGE.min + 1;
+const TOTAL = PLAGE.max - PLAGE.min + 1;   // 60 : toutes les fenêtres
+const F = 12;                              // une fenêtre
+const ports = (min, n) => Array.from({ length: n }, (_, i) => min + i);
 
 // Redirections relevées sur une vraie box : celles de son décodeur TV.
 const DECODEUR = [
@@ -214,12 +219,17 @@ function dossierReglages() {
 
 const silencieux = { log() {}, warn() {} };
 
-function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
+// Les ports « occupés sur la machine » sont simulés : `machine.occupes` tient
+// lieu des connexions WebRTC. La sonde automatique est repoussée très loin ;
+// les tests appellent ajusterFenetres() eux-mêmes.
+function orchestrateur(routeur, { fichier = dossierReglages(), machine = { occupes: [] }, ...opts } = {}) {
   return new OuverturePorts({
     plage: PLAGE,
     fichierReglages: fichier,
     trouverPasserelle: () => nat.trouverPasserelleUpnp({ locations: [routeur.location] }),
     adresseLocaleVers: async () => MOI,
+    sonder: async (_adresse, liste) => liste.filter((p) => machine.occupes.includes(p)),
+    intervalleSonde: 1e9,
     log: silencieux,
     ...opts
   });
@@ -341,6 +351,52 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     eq(adresseRoutable(''), null, 'inconnue : on ne conclut rien');
   });
 
+  await test('la plage se découpe en cinq fenêtres de 12, et Chromium garde toujours 60 ports', () => {
+    eq(decouper(PLAGE).map((f) => `${f.min}-${f.max}`),
+      ['26100-26111', '26112-26123', '26124-26135', '26136-26147', '26148-26159']);
+    eq(plageChromium(), { min: 26100, max: 26159 });
+    eq(plageChromium(26148), { min: 26148, max: 26207 }, 'la dernière fenêtre a aussi 60 ports devant elle');
+    ok(debutValide(26112) && !debutValide(26113) && !debutValide(26160) && !debutValide('26112'),
+      'un début lu dans un fichier est vérifié');
+    eq(plageChromium(26113), { min: 26100, max: 26159 }, 'début invalide : plage par défaut');
+  });
+
+  await test('fenêtre prise : tout ce qui n’est pas une redirection Castunn à nous', () => {
+    const f = { min: 26100, max: 26111 };
+    const nous = { adresseLocale: MOI, ancienneAdresse: '192.168.1.13' };
+    const e = (port, client, description = 'Castunn', protocole = 'UDP') =>
+      ({ port, portInterne: port, protocole, client, description, bail: 3600 });
+    ok(!fenetrePrise(DECODEUR, f, nous), 'le décodeur n’y est pas');
+    ok(!fenetrePrise([e(26100, MOI), e(26111, '192.168.1.13')], f, nous), 'les nôtres, actuelles ou anciennes');
+    ok(fenetrePrise([e(26111, '192.168.1.50')], f, nous), 'une autre machine Castunn');
+    ok(fenetrePrise([e(26105, MOI, 'Mon jeu')], f, nous), 'un autre programme, même vers nous');
+    ok(!fenetrePrise([e(26105, '192.168.1.50', 'x', 'TCP'), e(26112, '192.168.1.50')], f, nous),
+      'du TCP, ou juste à côté : sans effet');
+  });
+
+  await test('agrandir quand il reste 2 ports, rendre la fenêtre du haut quand elle est vide', () => {
+    const d = (o) => decisionFenetres({ nb: 1, nbMax: 5, libres: 12, occupesEnHaut: 0, ...o });
+    eq(d({ libres: 3 }), '', '3 ports libres : on attend');
+    eq(d({ libres: 2 }), 'agrandir');
+    eq(d({ libres: 0, nbMax: 1 }), '', 'plus de fenêtre disponible');
+    eq(d({ nb: 2, libres: 18, occupesEnHaut: 0 }), 'reduire', '6 libres en dessous');
+    eq(d({ nb: 2, libres: 17, occupesEnHaut: 0 }), '', '5 libres en dessous : on garde (pas d’allers-retours)');
+    eq(d({ nb: 2, libres: 20, occupesEnHaut: 1 }), '', 'un port encore tenu en haut : on garde');
+    eq(d({ nb: 1, libres: 12 }), '', 'jamais moins d’une fenêtre');
+  });
+
+  await test('la sonde voit un port tenu sur une adresse précise, comme ceux de Chromium', async () => {
+    const s = dgram.createSocket('udp4');
+    await new Promise((r) => s.bind(0, '127.0.0.1', r));
+    const port = s.address().port;
+    try {
+      // Mesuré : Chromium lie ses ports interface par interface. Une sonde sur
+      // 0.0.0.0 réussit alors quand même — elle les croyait tous libres.
+      if (process.platform === 'win32') ok(await udpPortLibre(port, '0.0.0.0'), 'le piège mesuré sous Windows');
+      eq(await portsOccupes('127.0.0.1', [port, port + 1].filter((p) => p < 65536)), [port]);
+    } finally { s.close(); }
+  });
+
   /* ------------------------- contre un faux routeur UPnP ------------------ */
 
   await test('ports ouverts derrière un CGNAT : ouverts, mais on prévient que c’est vain', async () => {
@@ -354,18 +410,19 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     } finally { await o.arreter(); await r.fermer(); }
   });
 
-  await test('les 30 ports sont ouverts, port externe = port interne, bail d’une heure', async () => {
+  await test('une seule fenêtre de 12 ports au démarrage, port externe = port interne, bail d’une heure', async () => {
     const r = await routeurUpnp();
     const o = orchestrateur(r);
     const etat = await o.demarrer();
     try {
       eq(etat.statut, 'ouvert', etat.message);
-      eq(etat.message, 'UPnP : ports 26100-26129 ouverts');
+      eq(etat.message, 'UPnP : ports 26100-26111 ouverts');
       const c = r.castunn();
-      eq(c.length, TOTAL);
+      eq(c.length, F, 'jamais les 60 d’un coup');
       ok(c.every((e) => e.portInterne === e.port && e.client === MOI && e.protocole === 'UDP' && e.bail === 3600),
         JSON.stringify(c[0]));
-      eq(c.map((e) => e.port), Array.from({ length: TOTAL }, (_, i) => PLAGE.min + i));
+      eq(c.map((e) => e.port), ports(PLAGE.min, F));
+      eq(o.plageChromium(), { min: 26100, max: 26159 }, 'Chromium garde 60 ports devant lui');
     } finally { await o.arreter(); await r.fermer(); }
   });
 
@@ -375,7 +432,7 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     await o.demarrer();
     const rendus = await o.arreter();
     try {
-      eq(rendus, TOTAL);
+      eq(rendus, F);
       eq(r.castunn().length, 0, 'plus aucune redirection Castunn');
       eq(r.table.map((e) => e.description), DECODEUR.map((e) => e.description), 'le décodeur TV est intact');
       ok(!o.aDesRedirections(), 'plus rien à rendre');
@@ -389,7 +446,8 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
       await orchestrateur(r, { fichier }).demarrer();   // « plantage » : jamais arrêté
       const o2 = orchestrateur(r, { fichier });
       await o2.demarrer();
-      eq(r.castunn().length, TOTAL, 'toujours 30, pas 60');
+      eq(r.castunn().length, F, 'toujours 12, pas 24');
+      eq(o2.plageTenue(), { min: 26100, max: 26111 }, 'la même fenêtre : nos propres redirections ne la rendent pas « prise »');
       await o2.arreter();
     } finally { await r.fermer(); }
   });
@@ -415,17 +473,37 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     } finally { await o.arreter(); await r.fermer(); }
   });
 
-  await test('une autre machine Castunn du foyer : on le dit, sans chercher d’autres ports', async () => {
+  await test('une autre machine Castunn du foyer : on prend la fenêtre suivante, et Chromium la suit', async () => {
     const autre = (port) => ({ port, portInterne: port, protocole: 'UDP', client: '192.168.1.50', description: 'Castunn', bail: 3600 });
     const r = await routeurUpnp({ existantes: [...DECODEUR, autre(26105), autre(26106)] });
+    const fichier = dossierReglages();
+    const o = orchestrateur(r, { fichier });
+    const plages = [];
+    o.on('plage', (p) => plages.push(p));
+    const etat = await o.demarrer();
+    try {
+      eq(etat.statut, 'ouvert', etat.message);
+      eq(etat.message, 'UPnP : ports 26112-26123 ouverts');
+      ok(!r.journal.some((j) => j.action === 'AddPortMapping' && j.port < 26112),
+        'la fenêtre prise est sautée sans rien demander au routeur');
+      ok(r.table.filter((e) => e.client === '192.168.1.50').length === 2, 'l’autre machine garde ses ports');
+      eq(plages, [{ min: 26112, max: 26171 }], 'Chromium commence à notre fenêtre');
+      eq(JSON.parse(fs.readFileSync(fichier, 'utf8')).ouverturePorts.debutPlage, 26112,
+        'noté pour les instances secondaires');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  await test('une redirection posée à la main, même vers nous, rend la fenêtre prise', async () => {
+    const r = await routeurUpnp({ existantes: [
+      { port: 26103, portInterne: 26103, protocole: 'UDP', client: MOI, description: 'Mon jeu', bail: 0 }
+    ] });
     const o = orchestrateur(r);
     const etat = await o.demarrer();
     try {
-      eq(etat.statut, 'partiel');
-      eq(etat.message, 'UPnP partiel (28/30) — 2 port(s) déjà redirigé(s) vers une autre machine');
-      ok(r.castunn().every((e) => e.port >= PLAGE.min && e.port <= PLAGE.max), 'aucun port hors plage demandé');
-      ok(r.table.filter((e) => e.client === '192.168.1.50').length === 2, 'l’autre machine garde ses ports');
+      eq(etat.message, 'UPnP : ports 26112-26123 ouverts');
+      eq(r.table.find((e) => e.port === 26103).description, 'Mon jeu', 'jamais réécrite');
     } finally { await o.arreter(); await r.fermer(); }
+    ok(r.table.some((e) => e.port === 26103), 'ni supprimée à la fermeture');
   });
 
   await test('toute la plage prise ailleurs : indisponible, avec la raison', async () => {
@@ -463,7 +541,7 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     const etat = await o.demarrer();
     try {
       eq(etat.statut, 'partiel');
-      ok(etat.message.startsWith('UPnP partiel (10/30)'), etat.message);
+      ok(etat.message.startsWith('UPnP partiel (10/12)'), etat.message);
       eq(r.castunn().length, 10);
     } finally { await o.arreter(); await r.fermer(); }
   });
@@ -478,9 +556,9 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     await pause(450);
     try {
       const apres = r.journal.filter((j) => j.action === 'AddPortMapping').length;
-      ok(apres >= avant + TOTAL, `renouvellement attendu (${avant} → ${apres} ajouts)`);
+      ok(apres >= avant + F, `renouvellement attendu (${avant} → ${apres} ajouts)`);
       eq(evenements, ['en-cours', 'ouvert'], 'un renouvellement à l’identique ne republie rien');
-      eq(r.castunn().length, TOTAL, 'toujours sans doublon');
+      eq(r.castunn().length, F, 'toujours sans doublon');
     } finally { await o.arreter(); await r.fermer(); }
   });
 
@@ -503,7 +581,7 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
 
       // Et recocher rouvre.
       eq((await o2.definirActif(true)).statut, 'ouvert');
-      eq(r.castunn().length, TOTAL);
+      eq(r.castunn().length, F);
       await o2.arreter();
     } finally { await r.fermer(); }
   });
@@ -513,7 +591,7 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     const o = orchestrateur(r);
     const cycle = o.demarrer();
     await pause(150);   // quelques ports déjà ouverts, pas tous
-    ok(r.castunn().length > 0 && r.castunn().length < TOTAL, `ouverture en cours (${r.castunn().length})`);
+    ok(r.castunn().length > 0 && r.castunn().length < F, `ouverture en cours (${r.castunn().length})`);
     await o.arreter({ delaiMax: 5000 });
     await cycle;
     try {
@@ -554,6 +632,148 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     ok(!o.aDesRedirections());
   });
 
+  await test('routeur muet au démarrage : on réessaie seul, et ça finit par ouvrir', async () => {
+    const r = await routeurUpnp();
+    let appels = 0;
+    const o = orchestrateur(r, {
+      // Muet deux fois, comme une box juste après la suppression de redirections.
+      trouverPasserelle: async () => (++appels <= 2 ? null : nat.trouverPasserelleUpnp({ locations: [r.location] })),
+      reessais: [30, 30]
+    });
+    const evenements = [];
+    o.on('etat', (e) => evenements.push(e.statut));
+    try {
+      eq((await o.demarrer()).statut, 'indisponible');
+      for (let i = 0; i < 200 && o.etatPublic().statut !== 'ouvert'; i++) await pause(10);
+      eq(o.etatPublic().message, 'UPnP : ports 26100-26111 ouverts');
+      eq(appels, 3);
+      eq(evenements, ['en-cours', 'indisponible', 'ouvert'], 'les réessais ratés ne republient rien');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  await test('un arrêt annule les réessais', async () => {
+    let appels = 0;
+    const o = new OuverturePorts({
+      plage: PLAGE, fichierReglages: dossierReglages(), log: silencieux,
+      trouverPasserelle: async () => { appels++; return null; },
+      adresseLocaleVers: async () => MOI,
+      reessais: [20]
+    });
+    await o.demarrer();
+    await o.arreter();
+    await pause(100);
+    eq(appels, 1);
+  });
+
+  await test('instance secondaire : jamais un mot au routeur, et la case ne la change pas', async () => {
+    const r = await routeurUpnp();
+    const o = orchestrateur(r, { delegue: true });
+    try {
+      const etat = await o.demarrer();
+      eq(etat.statut, 'delegue');
+      eq(etat.message, 'UPnP : géré par la première instance de Castunn (même machine, mêmes ports redirigés)');
+      eq((await o.definirActif(false)).statut, 'delegue');
+      eq(r.journal.length, 0, 'aucune requête');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  /* ------------------------- fenêtres qui grandissent --------------------- */
+
+  await test('fenêtre presque pleine : une de plus ; vidée : rendue', async () => {
+    const r = await routeurUpnp();
+    const machine = { occupes: [] };
+    const o = orchestrateur(r, { machine });
+    const plages = [];
+    o.on('plage', (p) => plages.push(p));
+    await o.demarrer();
+    try {
+      machine.occupes = ports(26100, 9);
+      eq((await o.ajusterFenetres()).message, 'UPnP : ports 26100-26111 ouverts', '3 libres : rien');
+      machine.occupes = ports(26100, 10);
+      eq((await o.ajusterFenetres()).message, 'UPnP : ports 26100-26123 ouverts', '2 libres : agrandie');
+      eq(r.castunn().map((e) => e.port), ports(26100, 24));
+      ok(r.castunn().every((e) => e.bail === 3600 && e.client === MOI), 'mêmes règles que la première');
+      machine.occupes = ports(26100, 6);
+      eq((await o.ajusterFenetres()).message, 'UPnP : ports 26100-26111 ouverts', 'vidée : rendue');
+      eq(r.castunn().map((e) => e.port), ports(26100, F));
+      eq(plages, [], 'le début ne bouge pas : Chromium n’est pas touché');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  await test('jamais au-delà de 60 ports, une fenêtre à la fois', async () => {
+    const r = await routeurUpnp();
+    const machine = { occupes: ports(26100, 60) };
+    const o = orchestrateur(r, { machine });
+    await o.demarrer();
+    try {
+      const vus = [];
+      for (let i = 0; i < 6; i++) { await o.ajusterFenetres(); vus.push(r.castunn().length); }
+      eq(vus, [24, 36, 48, 60, 60, 60]);
+      eq(o.etatPublic().message, 'UPnP : ports 26100-26159 ouverts');
+      eq(await o.arreter(), 60, 'tout est rendu');
+      eq(r.castunn().length, 0);
+    } finally { await r.fermer(); }
+  });
+
+  await test('fenêtre suivante prise : on le dit, on n’insiste pas, rien n’est volé', async () => {
+    const voisin = { port: 26115, portInterne: 26115, protocole: 'UDP', client: '192.168.1.50', description: 'Castunn', bail: 3600 };
+    const r = await routeurUpnp({ existantes: [voisin] });
+    const machine = { occupes: ports(26100, 12) };
+    const journal = [];
+    const o = orchestrateur(r, { machine, log: { log: (m) => journal.push(m), warn() {} } });
+    await o.demarrer();
+    try {
+      await o.ajusterFenetres();
+      eq(r.castunn().filter((e) => e.client === MOI).length, F, 'toujours une seule fenêtre');
+      ok(journal.some((m) => m.includes('26112-26123 déjà redirigés ailleurs')), journal.join(' | '));
+      const requetes = r.journal.length;
+      await o.ajusterFenetres();
+      eq(r.journal.length, requetes, 'pas une requête de plus à chaque sonde');
+      ok(r.table.some((e) => e.port === 26115 && e.client === '192.168.1.50'), 'le voisin garde son port');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  await test('un arrêt pendant l’agrandissement ne laisse aucun port fantôme', async () => {
+    const r = await routeurUpnp({ latence: 15 });
+    const machine = { occupes: ports(26100, 12) };
+    const o = orchestrateur(r, { machine });
+    await o.demarrer();
+    const ajustement = o.ajusterFenetres();
+    // Le routeur relit d'abord sa liste, puis ajoute port par port.
+    for (let i = 0; i < 300 && r.castunn().length <= F; i++) await pause(10);
+    ok(r.castunn().length > F && r.castunn().length < 2 * F, `agrandissement en cours (${r.castunn().length})`);
+    await o.arreter({ delaiMax: 5000 });
+    await ajustement;
+    try {
+      eq(r.castunn().length, 0, 'tout rendu, y compris la fenêtre qui s’ouvrait');
+    } finally { await r.fermer(); }
+  });
+
+  await test('la fenêtre notée pour les instances secondaires n’est jamais périmée', async () => {
+    const fichier = dossierReglages();
+    fs.writeFileSync(fichier, JSON.stringify({ ouverturePorts: { actif: true, debutPlage: 26136 } }));
+    const r = await routeurUpnp();
+    const o = orchestrateur(r, { fichier });
+    await o.demarrer();
+    try {
+      eq(JSON.parse(fs.readFileSync(fichier, 'utf8')).ouverturePorts.debutPlage, 26100,
+        'retombé sur la première fenêtre : le fichier le dit');
+    } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  await test('décocher la case ramène Chromium au début de la plage', async () => {
+    const autre = { port: 26100, portInterne: 26100, protocole: 'UDP', client: '192.168.1.50', description: 'Castunn', bail: 3600 };
+    const r = await routeurUpnp({ existantes: [autre] });
+    const o = orchestrateur(r);
+    const plages = [];
+    o.on('plage', (p) => plages.push(p.min));
+    await o.demarrer();
+    await o.definirActif(false);
+    try {
+      eq(plages, [26112, 26100]);
+    } finally { await r.fermer(); }
+  });
+
   /* ------------------------- contre un faux routeur NAT-PMP --------------- */
 
   await test('NAT-PMP : adresse externe, ouverture et suppression', async () => {
@@ -570,24 +790,26 @@ function orchestrateur(routeur, { fichier = dossierReglages(), ...opts } = {}) {
     } finally { await r.fermer(); }
   });
 
-  await test('NAT-PMP : un autre port externe proposé est rendu, jamais accepté', async () => {
+  await test('NAT-PMP : un port pris révèle la fenêtre prise, rendue entière pour la suivante', async () => {
     const r = await routeurPmp({ decaler: [26101] });
     const o = new OuverturePorts({
       plage: PLAGE,
       fichierReglages: dossierReglages(),
       trouverPasserelle: async () => new nat.PasserellePmp({ hote: '127.0.0.1', port: r.port }),
       adresseLocaleVers: async () => MOI,
+      sonder: async () => [],
       log: silencieux
     });
     const etat = await o.demarrer();
     try {
-      eq(etat.statut, 'partiel');
+      eq(etat.statut, 'ouvert', etat.message);
       eq(etat.methode, 'NAT-PMP');
-      eq(etat.message, 'NAT-PMP partiel (29/30) — 1 port(s) déjà redirigé(s) vers une autre machine');
+      eq(etat.message, 'NAT-PMP : ports 26112-26123 ouverts');
       ok(r.recues.some((q) => q.interne === 26101 && q.duree === 0), 'la redirection décalée est aussitôt rendue');
+      ok(r.recues.some((q) => q.interne === 26100 && q.duree === 0), 'et le reste de la fenêtre avec elle');
       await o.arreter();
-      const rendus = r.recues.filter((q) => q.duree === 0).map((q) => q.interne);
-      ok(rendus.length >= TOTAL, `tout est rendu à la fermeture (${rendus.length})`);
+      const rendus = new Set(r.recues.filter((q) => q.duree === 0).map((q) => q.interne));
+      ok(ports(26112, F).every((p) => rendus.has(p)), 'tout est rendu à la fermeture');
     } finally { await r.fermer(); }
   });
 

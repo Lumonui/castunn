@@ -92,7 +92,8 @@ function chercherPasserellesUpnp({ delai = 3000 } = {}) {
       if (r) trouvees.add(r.location);
     });
     socket.on('error', finir);
-    socket.bind(0, () => {
+    const envoyer = () => {
+      if (fini) return;
       for (const st of CIBLES_SSDP) {
         const requete = [
           'M-SEARCH * HTTP/1.1',
@@ -104,6 +105,12 @@ function chercherPasserellesUpnp({ delai = 3000 } = {}) {
         ].join('\r\n');
         socket.send(requete, SSDP_PORT, SSDP_ADRESSE, () => {});
       }
+    };
+    // Envoyée deux fois : c'est de l'UDP, et une vraie box reste muette
+    // quelques instants juste après la suppression de redirections (constaté).
+    socket.bind(0, () => {
+      envoyer();
+      setTimeout(envoyer, Math.min(1000, delai / 3));
     });
     setTimeout(finir, delai);
   });

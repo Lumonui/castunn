@@ -18,8 +18,8 @@ le P2P : sans lui, le message d'erreur dit si un relais existait.
 | A2 | Négociation « perfect negotiation » : une seule fabrique d'offres, les collisions ne détruisent plus la connexion, `restartIce()` a enfin un effet. |
 | A3 | Après un échec, un seul des deux pairs relance. |
 | A4 | Deux STUN indépendants (Google, Cloudflare). |
-| A5 | Plage UDP fixe 26100-26129 (`webrtc-ports.js`), vérifiée au démarrage. |
-| A6 | Ouverture automatique de cette plage sur la box (UPnP-IGD, puis NAT-PMP) ; case dans les Paramètres ; aucun port fantôme. |
+| A5 | Plage UDP fixe 26100-26159 (`webrtc-ports.js`), vérifiée au démarrage. |
+| A6 | Ouverture automatique sur la box (UPnP-IGD, puis NAT-PMP), par fenêtres de 12 ports : une par machine au départ, une de plus quand elle se remplit, 60 ports au plus ; case dans les Paramètres ; aucun port fantôme. |
 | A7 | Chemin journalisé (`[RTC] chemin : host ↔ srflx…`) ; pastille verte en direct, jaune-orangé « Connecté (dégradé) » par relais. |
 | B1 | Le serveur annonce un relais TURN avec des identifiants temporaires (`TURN_URLS`, `TURN_SECRET`). |
 | B2 | Le client l'utilise, renouvelle ses identifiants avant échéance, s'en passe s'il est mal formé. |
@@ -73,9 +73,15 @@ Deux Castunn reliés au même serveur.
 
 ### Ouverture de ports (UPnP / NAT-PMP)
 
-- Console : `UPnP : ports 26100-26129 ouverts`, ou la raison d'un échec.
-- Interface de la box : trente redirections UDP décrites « Castunn » ;
-  décocher la case des Paramètres, ou quitter Castunn, les supprime.
+- Console : `UPnP : ports 26100-26111 ouverts`, ou la raison d'un échec.
+  Une seconde machine du foyer prend la fenêtre suivante (`26112-26123`).
+- Interface de la box : douze redirections UDP décrites « Castunn » par
+  machine ; décocher la case des Paramètres, ou quitter Castunn, les supprime.
+- Agrandissement : au-delà d'une dizaine de connexions simultanées sur une
+  machine, la console affiche `UPnP : ports 26100-26123 ouverts` ; quand elles
+  se ferment, la fenêtre ajoutée est rendue (contrôle toutes les 5 s).
+  Fenêtre suivante prise : `[UPnP] ports … déjà redirigés ailleurs` dans le
+  terminal, et les connexions en plus passent par STUN ou le relais.
 - Automatique : `npm run test:nat` (contre de faux routeurs, sans toucher à la
   vraie box).
 
