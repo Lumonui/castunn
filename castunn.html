@@ -510,7 +510,11 @@
       ? (opts) => window.serverControl.discover(opts)
       : null;
 
-    if (discover && !buildWsUrlFromInput() && (rescan || !lastDiscoveredHost)) {
+    // Pas sur une connexion déjà ouverte : si le balayage retombe sur ce même
+    // serveur, connectFromModal s'arrête (« déjà connecté ») et plus rien ne
+    // remettait « Connecté » — la pastille restait sur « Recherche… ».
+    const dejaOuvert = socket && socket.readyState === WebSocket.OPEN;
+    if (discover && !dejaOuvert && !buildWsUrlFromInput() && (rescan || !lastDiscoveredHost)) {
       setWsStatus('Recherche…');
     }
 
