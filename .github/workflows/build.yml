@@ -23,6 +23,11 @@ jobs:
 
       - run: npm install
 
+      # Le serveur refuse tout client d'une autre version : une page qui
+      # annoncerait une version périmée serait refusée partout.
+      - name: Version de la page à jour
+        run: node scripts/sync-version.js --verifier
+
       - name: Build & publish
         run: npx electron-builder --publish always
         env:

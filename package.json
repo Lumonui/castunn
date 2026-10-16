@@ -6,6 +6,8 @@
   "private": true,
   "scripts": {
     "start": "electron .",
+    "version": "node scripts/sync-version.js && git add src/renderer/version.js",
+    "version:sync": "node scripts/sync-version.js",
     "test": "node test/signal.test.js",
     "test:unit": "node test/unit.test.mjs",
     "test:essaim": "node test/essaim.test.mjs",
@@ -37,7 +39,8 @@
       "!.github/**",
       "!CLAUDE.md",
       "!consignes_turn.txt",
-      "!docs/**"
+      "!docs/**",
+      "!scripts/**"
     ],
     "win": {
       "target": "nsis",
@@ -67,7 +70,8 @@
       {
         "provider": "github",
         "owner": "Lumonui",
-        "repo": "castunn"
+        "repo": "castunn",
+        "releaseType": "release"
       }
     ]
   },

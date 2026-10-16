@@ -9,6 +9,8 @@
 </head>
 <body>
   <!-- <h1>Castunn</h1> -->
+  <!-- Erreur fatale : serveur et application de versions différentes. -->
+  <div id="bandeauFatal" class="bandeau-fatal" hidden></div>
   <div class="row muted">
     <span class="pill">WS : <span id="wsStatus" class="status ko">Déconnecté</span></span>
     <span class="pill">RTC (P2P) : <span id="rtcStatus" class="status ko">Déconnecté</span></span>
@@ -160,7 +162,7 @@
 			  Favorise les connexions directes avec les pairs hors de votre réseau. Décocher supprime aussitôt les redirections.
 			</p>
 		  </div>
-		  Castunn v.1.2 du 23-07-2026
+		  <span id="appVersion">Castunn</span>
 		  <div class="settings-actions">
 			<button type="button" class="btn" id="settingsCancel">Annuler</button>
 			<button type="submit" class="btn primary">Enregistrer</button>
@@ -185,6 +187,7 @@
   import { resumerMaillage } from './src/renderer/mesh-status.js';
   import { createReceptionTiles } from './src/renderer/reception-tiles.js';
   import { createEssaim } from './src/renderer/essaim.js';
+  import { VERSION, DATE_VERSION } from './src/renderer/version.js';
 
   /* === Etat global === */
   let socket;
@@ -567,6 +570,8 @@
     // Sans ça, les deux partaient : deux balayages, deux `join`, et les autres
     // pairs voyaient un cycle connexion/déconnexion/connexion inutile.
     cancelReconnect();
+    // Reconnexion demandée : un refus de version précédent ne bloque plus.
+    leverRefusVersion();
 
     const url = await resolveSignalUrlAsync(opts);
     if (!url) {
@@ -858,6 +863,42 @@ function showLocalImage(url){
   // l'annuler : une reconnexion demandée entre-temps (modale, démarrage du
   // serveur local) doit rester la seule à s'exécuter.
   let reconnectTimer = null;
+
+  /* --- Version refusée : erreur fatale -------------------------------------
+   * Serveur et application doivent avoir exactement la même version : pas de
+   * cohabitation, les protocoles divergent. Le serveur refuse un client
+   * différent (`version-refusee`) ; la page refuse de même un serveur
+   * différent, ou trop ancien pour annoncer sa version. Plus aucun essai
+   * automatique ensuite : seule une reconnexion demandée (Paramètres,
+   * démarrage du serveur local) relance.
+   * --------------------------------------------------------------------- */
+  let versionBloquee = null;
+  const bandeauFatal = document.getElementById('bandeauFatal');
+
+  function refuserVersion(versionServeur) {
+    const serveur = typeof versionServeur === 'string' && versionServeur ? `v${versionServeur}` : 'une version trop ancienne pour l’annoncer';
+    const ou = (window.__castunnSignalUrl || '').replace(/^wss?:\/\//, '');
+    const texte = `Version incompatible : cette application est en v${VERSION}, le serveur${ou ? ` (${ou})` : ''} en ${serveur}.`
+      + ' Tous les participants et le serveur doivent avoir exactement la même version de Castunn :'
+      + ' mettez à jour celui qui est en retard, puis reconnectez-vous.';
+    versionBloquee = texte;
+    cancelReconnect();
+    bandeauFatal.textContent = texte;
+    bandeauFatal.setAttribute('role', 'alert');
+    bandeauFatal.hidden = false;
+    setWsStatus('Version incompatible');
+    ctrlError.textContent = texte;
+    addConsole(`[WS] ${texte}`);
+    try { socket?.close(1000, 'version'); } catch {}
+  }
+
+  function leverRefusVersion() {
+    versionBloquee = null;
+    bandeauFatal.hidden = true;
+    bandeauFatal.removeAttribute('role');
+    bandeauFatal.textContent = '';
+  }
+
   function cancelReconnect() {
     if (reconnectTimer === null) return;
     clearTimeout(reconnectTimer);
@@ -903,6 +944,8 @@ function showLocalImage(url){
         room,
         ip: ip || '',
         nick: (window.__nickname || '').trim(),
+        // Le serveur refuse toute autre version que la sienne.
+        version: VERSION,
         // Envois binaires signés de leur émetteur : plusieurs pairs peuvent
         // nous envoyer en même temps par le WebSocket sans se mélanger.
         capacites: ['binaire-signe']
@@ -920,6 +963,9 @@ function showLocalImage(url){
 
     socket.onclose = (e)=>{
       if (wsGen !== myGen) return;
+      // Version refusée : le même serveur refuserait encore. Pas de nouvel
+      // essai automatique ; seule une action de l'utilisateur relance.
+      if (versionBloquee) { resetPeerState(); return; }
       setWsStatus('Déconnecté');
       ctrlError.textContent = `Connexion fermée (code ${e.code}). Reconnexion dans 3 s...`;
 
@@ -974,10 +1020,17 @@ function showLocalImage(url){
 
         // ==== SIGNALISATION ====
         if (msg.type === 'hello') {
+          // Une seule version admise, des deux côtés : un serveur d'une autre
+          // version (ou trop ancien pour en annoncer une) est refusé ici.
+          if (msg.version !== VERSION) { refuserVersion(msg.version); return; }
           myId = msg.peerId;
           capacitesServeur = Array.isArray(msg.capacites) ? msg.capacites : [];
           addConsole(`[WS] hello - myId=${myId}`);
           recevoirIceConfig(msg, { viaHello: true });
+          return;
+        }
+        if (msg.type === 'version-refusee') {
+          refuserVersion(msg.serveur);
           return;
         }
         // Sans `from`, c'est le serveur qui répond. Avec, c'est la demande d'un
@@ -2133,6 +2186,9 @@ function showLocalImage(url){
 
   if (FORCE_RELAY) addConsole('[TEST] relais forcé (forceRelay=1) : seules les connexions par relais TURN sont tentées.');
   if (SANS_RTC) addConsole('[TEST] RTC désactivé (rtc=off) : tout passe par le WebSocket.');
+  // Version réelle : le serveur n'admet que la sienne.
+  document.getElementById('appVersion').textContent = `Castunn v${VERSION} du ${DATE_VERSION}`;
+  addConsole(`Castunn v${VERSION} du ${DATE_VERSION}`);
   if (SANS_ESSAIM) addConsole('[TEST] essaim désactivé (essaim=off) : les fichiers arrivent entiers, comme avec une ancienne version.');
 
   // Témoin de bon chargement, relevé par le garde-fou ci-dessous.

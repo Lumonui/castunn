@@ -7,6 +7,29 @@ const crypto = require('crypto');
 const express = require('express');
 const { WebSocketServer, WebSocket } = require('ws');
 
+/* ==========================================================================
+ * Version : une seule admise.
+ *
+ * Le serveur refuse tout client d'une autre version, et le client refuse tout
+ * serveur d'une autre version : pas de cohabitation entre versions, dont les
+ * protocoles divergent (un client 1.2.1 accusait un « stop » P2P sans arrêter
+ * sa lecture, et ne gérait qu'une connexion P2P).
+ *
+ * Lue dans package.json, à côté de ce fichier ; l'application installée, où
+ * server.js est copié hors de l'archive, la passe par CASTUNN_VERSION.
+ * ========================================================================== */
+const VERSION = (() => {
+  if (process.env.CASTUNN_VERSION) return process.env.CASTUNN_VERSION;
+  try { return require('./package.json').version; } catch { return null; }
+})();
+if (!VERSION) {
+  console.error('[Castunn] version inconnue : déployez package.json à côté de server.js'
+    + ' (ou définissez CASTUNN_VERSION). Sans elle, aucun client ne peut être accepté.');
+  process.exit(1);
+}
+// Code de fermeture d'une connexion refusée pour version différente.
+const FERMETURE_VERSION = 4009;
+
 const app = express();
 
 // Petit endpoint santé (utile pour Render)
@@ -22,6 +45,7 @@ app.get('/castunn', (_req, res) => {
     app: 'castunn',
     role: 'signal',
     version: 1,
+    versionCastunn: VERSION,
     ws: true
   });
 });
@@ -265,7 +289,9 @@ wss.on('connection', (ws, req) => {
   // Accuse réception
   // Le relais TURN voyage avec le hello : le client le connaît avant même
   // d'entrer dans la room, donc avant toute connexion à établir.
-  ws.send(JSON.stringify({ type: 'hello', peerId: id, capacites: CAPACITES, ...(configIce(id) || {}) }));
+  ws.send(JSON.stringify({
+    type: 'hello', peerId: id, version: VERSION, capacites: CAPACITES, ...(configIce(id) || {})
+  }));
 
   console.log(`[WS] + Client connecté id=${ws.__id} ip=${ip || '(inconnue)'}`);
   if (!ip) {
@@ -386,6 +412,15 @@ wss.on('connection', (ws, req) => {
 
       // --- Présence / rooms ---
       case 'join': {
+		// Une seule version admise : un client différent (ou trop ancien pour
+		// en annoncer une) est refusé, avec de quoi l'expliquer, puis déconnecté.
+		if (data.version !== VERSION) {
+		  const client = typeof data.version === 'string' ? data.version.slice(0, 32) : null;
+		  console.log(`[WS] client id=${meta.id} refusé : version ${client || 'non annoncée (trop ancienne)'}, serveur ${VERSION}`);
+		  ws.send(JSON.stringify({ type: 'version-refusee', serveur: VERSION, client }));
+		  ws.close(FERMETURE_VERSION, `Castunn ${VERSION} requis`);
+		  break;
+		}
 		const room = String(data.room || 'default');
 		// Mémorise le nick, et l'IP annoncée par le client SEULEMENT si le serveur
 		// n'a pas pu déterminer une IP fiable (cas du reverse proxy → "::1").

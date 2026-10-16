@@ -278,7 +278,13 @@ function spawnServer() {
       // Serveur du réseau local : un relais TURN n'y servirait à rien, et des
       // variables TURN_* traînant dans l'environnement de la machine ne
       // doivent pas lui en faire annoncer un.
-      const env = { ...process.env, PORT: '8080', NODE_PATH: nodeModulesPath };
+      // CASTUNN_VERSION : installé, server.js est copié hors de l'archive et
+      // n'y trouverait pas package.json. Le serveur local a toujours la
+      // version de l'application qui le lance.
+      const env = {
+        ...process.env, PORT: '8080', NODE_PATH: nodeModulesPath,
+        CASTUNN_VERSION: require('./package.json').version
+      };
       delete env.TURN_URLS;
       delete env.TURN_SECRET;
       delete env.TURN_TTL;

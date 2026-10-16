@@ -8,6 +8,8 @@ const { fork } = require('child_process');
 const WebSocket = require('ws');
 
 const SERVER_PATH = path.join(__dirname, '..', 'server.js');
+// Version que le serveur exige des clients.
+const VERSION = require('../package.json').version;
 
 /**
  * Lance server.js sur un port dédié et attend qu'il soit prêt.
@@ -166,7 +168,8 @@ async function connect(port, name, options = {}) {
  * intermittence — pas le code.
  */
 async function joinRoom(client, room, extra = {}) {
-  client.send({ type: 'join', room, ...extra });
+  // Le serveur refuse toute autre version que la sienne.
+  client.send({ type: 'join', room, version: VERSION, ...extra });
   await client.waitForType('peers', () => true, { label: `entrée dans ${room}` });
   return client;
 }
@@ -201,4 +204,4 @@ function assertEqual(actual, expected, msg) {
   }
 }
 
-module.exports = { startServer, httpGet, TestClient, connect, joinRoom, sleep, test, run, assert, assertEqual };
+module.exports = { VERSION, startServer, httpGet, TestClient, connect, joinRoom, sleep, test, run, assert, assertEqual };

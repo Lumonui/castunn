@@ -14,6 +14,8 @@ import { STUN_URLS, buildIceServers, createIceQueue, describeIncoming, isPoliteP
 import { describeRtcPath, formatRtcPath, describeCollectes, summarizeGathered } from '../src/renderer/rtc-stats.js';
 import { sanitizeTurnServers, credentialsExpiring, turnFailureReason, explainNoRtc }
   from '../src/renderer/turn-config.js';
+import { VERSION, DATE_VERSION } from '../src/renderer/version.js';
+import { readFileSync } from 'node:fs';
 
 // Les cas sont collectés puis exécutés en séquence : un test asynchrone doit
 // être attendu, sinon son échec partirait en promesse rejetée et le test
@@ -28,6 +30,14 @@ function eq(actual, expected, msg) {
 function ok(cond, msg) { if (!cond) throw new Error(msg || 'assertion échouée'); }
 
 console.log('\nTests unitaires\n');
+
+/* -------------------------------- version ------------------------------- */
+
+test('la page annonce la version de package.json (le serveur refuse toute autre)', () => {
+  const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
+  eq(VERSION, version, 'src/renderer/version.js en retard : lancez « npm run version:sync »');
+  ok(/^\d\d-\d\d-\d{4}$/.test(DATE_VERSION), 'date : ' + DATE_VERSION);
+});
 
 /* ------------------------------- protocol ------------------------------- */
 

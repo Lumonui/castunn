@@ -12,7 +12,7 @@
 const path = require('path');
 const { app, BrowserWindow } = require('electron');
 const WebSocket = require('ws');
-const { startServer } = require('./helpers');
+const { startServer, VERSION } = require('./helpers');
 
 // Port dédié aux tests : Castunn peut tourner en parallèle avec son serveur
 // local sur 8080, les tests ne doivent pas en dépendre.
@@ -134,7 +134,7 @@ app.whenReady().then(async () => {
     try { const j = JSON.parse(d.toString()); if (j.type === 'hello') mutePeerId = j.peerId; } catch {}
   });
   await waitUntil(async () => mutePeerId, { label: 'hello du pair muet' });
-  mute.send(JSON.stringify({ type: 'join', room: 'default' })); // ni ip ni nick
+  mute.send(JSON.stringify({ type: 'join', room: 'default', version: VERSION })); // ni ip ni nick
 
   await check('un pair sans identité n\'affiche jamais un identifiant brut ni ::1', async () => {
     const text = await waitUntil(
@@ -265,7 +265,7 @@ app.whenReady().then(async () => {
     headers: { 'x-forwarded-for': '2001:863:294:3d9b:a0c:ca63:d094:b080' }
   });
   await new Promise((r) => dual.once('open', r));
-  dual.send(JSON.stringify({ type: 'join', room: 'default', ip: '80.214.20.117', nick: 'sir' }));
+  dual.send(JSON.stringify({ type: 'join', room: 'default', version: VERSION, ip: '80.214.20.117', nick: 'sir' }));
 
   const ligneDe = (fragment) => win.webContents.executeJavaScript(`
     (() => {
@@ -352,6 +352,40 @@ app.whenReady().then(async () => {
       },
       { label: 'rejet affiché dans la console de l\'app' }
     );
+  });
+
+  await check('la version réelle et sa date sont affichées', async () => {
+    const t = await win.webContents.executeJavaScript('document.getElementById("appVersion").textContent');
+    if (!new RegExp(`^Castunn v${VERSION.replace(/\./g, '\\.')} du \\d\\d-\\d\\d-\\d{4}$`).test(t)) throw new Error('affiché : ' + t);
+  });
+
+  // Un serveur d'une autre version : la page doit refuser net, le dire
+  // clairement, et ne plus réessayer d'elle-même.
+  await check('serveur d’une autre version : erreur fatale claire, sans nouvel essai', async () => {
+    const PORT_AUTRE = PORT - 7;
+    const autre = new WebSocket.Server({ port: PORT_AUTRE, host: '127.0.0.1' });
+    let connexions = 0;
+    autre.on('connection', (ws) => { connexions++; ws.send(JSON.stringify({ type: 'hello', peerId: 'zz', version: '0.0.1' })); });
+    const page = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true } });
+    try {
+      await page.loadFile(path.join(PROJECT, 'castunn.html'));
+      await page.webContents.executeJavaScript(`localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT_AUTRE}'); true`);
+      await page.webContents.reload();
+      await new Promise((r) => page.webContents.once('did-finish-load', r));
+      const bandeau = await waitUntil(async () => page.webContents.executeJavaScript(
+        `(() => { const b = document.getElementById('bandeauFatal'); return b.hidden ? null : b.textContent; })()`),
+        { label: 'bandeau d’erreur fatale' });
+      if (!bandeau.includes(`v${VERSION}`) || !bandeau.includes('v0.0.1') || !bandeau.includes('même version')) {
+        throw new Error('message : ' + bandeau);
+      }
+      const statut = await page.webContents.executeJavaScript('document.getElementById("wsStatus").textContent');
+      if (statut !== 'Version incompatible') throw new Error('statut : ' + statut);
+      await sleep(4500); // au-delà du réessai automatique (3 s)
+      if (connexions !== 1) throw new Error(`${connexions} connexions : la page a réessayé`);
+    } finally {
+      page.destroy();
+      await new Promise((r) => autre.close(r));
+    }
   });
 
   const failed = results.filter((r) => !r.ok).length;

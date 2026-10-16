@@ -609,3 +609,19 @@ strong {
   border-radius: var(--radius);
   box-shadow: 0 4px 20px rgba(0,0,0,.4);
 }
+
+/* Erreur fatale (version refusée) : impossible à manquer, au-dessus de tout. */
+.bandeau-fatal {
+  position: sticky;
+  top: 0;
+  z-index: 1000;
+  margin: 0 0 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius);
+  background: rgba(243, 139, 168, 0.15);
+  border: 1px solid var(--error);
+  color: var(--error);
+  font-weight: 600;
+  line-height: 1.4;
+}
+.bandeau-fatal[hidden] { display: none; }

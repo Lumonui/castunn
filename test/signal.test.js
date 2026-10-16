@@ -7,7 +7,7 @@
 //   npm test
 
 const {
-  startServer, httpGet, connect, joinRoom, sleep,
+  VERSION, startServer, httpGet, connect, joinRoom, sleep,
   test, run, assert, assertEqual
 } = require('./helpers');
 
@@ -381,6 +381,33 @@ test('le hello annonce les capacités du serveur', async () => {
   assert(hello.capacites.includes('adressage') && hello.capacites.includes('binaire-signe'), JSON.stringify(hello.capacites));
   await a.close();
 });
+
+/* ============================== Version ============================== */
+
+test('le serveur annonce sa version (hello et découverte)', async () => {
+  const a = await connect(PORT, 'alice');
+  assertEqual(a.received.find((e) => e.json?.type === 'hello').json.version, VERSION, 'hello');
+  assertEqual(JSON.parse((await httpGet(PORT, '/castunn')).body).versionCastunn, VERSION, 'découverte');
+  await a.close();
+});
+
+for (const [cas, version] of [['sans version (1.2.1 et avant)', undefined], ['d’une autre version', '0.0.1']]) {
+  test(`un client ${cas} est refusé, déconnecté, et n’entre jamais dans la room`, async () => {
+    const temoin = await connect(PORT, 'témoin'); await joinRoom(temoin, 'version', {});
+    const vieux = await connect(PORT, 'vieux');
+    const ferme = new Promise((r) => vieux.ws.once('close', (code, raison) => r({ code, raison: String(raison) })));
+    vieux.send({ type: 'join', room: 'version', ...(version ? { version } : {}) });
+    const refus = await vieux.waitForType('version-refusee');
+    assertEqual(refus.serveur, VERSION, 'version du serveur');
+    assertEqual(refus.client, version ?? null, 'version du client');
+    const { code, raison } = await ferme;
+    assertEqual(code, 4009, 'code de fermeture');
+    assert(raison.includes(VERSION), 'raison : ' + raison);
+    assert(!vieux.received.some((e) => e.json?.type === 'peers'), 'il ne doit pas recevoir la liste des pairs');
+    await temoin.expectNothing((e) => e.json?.type === 'presence' && e.json.action === 'join', 300, 'arrivée du client refusé');
+    await temoin.close();
+  });
+}
 
 test('un message adressé ne va qu’aux pairs désignés, et jamais hors de la room', async () => {
   const room = 'adressage';
