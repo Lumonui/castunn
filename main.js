@@ -409,6 +409,7 @@ function createWindow() {
   const query = {};
   if (process.env.CASTUNN_FORCE_RELAY === '1') query.forceRelay = '1';
   if (process.env.CASTUNN_SANS_RTC === '1') query.rtc = 'off';
+  if (process.env.CASTUNN_SANS_ESSAIM === '1') query.essaim = 'off';
 
   win.loadFile(path.join(__dirname, 'castunn.html'), { query });
 }

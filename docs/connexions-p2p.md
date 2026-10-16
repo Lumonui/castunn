@@ -85,6 +85,21 @@ Deux Castunn reliés au même serveur.
 - Automatique : `npm run test:nat` (contre de faux routeurs, sans toucher à la
   vraie box).
 
+### Essaim (fichiers à plusieurs)
+
+Trois Castunn ou plus, reliés en P2P (pastille `2/2`, `3/3`…).
+- Émetteur : `Envoi de film.mp4 : 2 par essaim`, puis `Envoi terminé … — les
+  récepteurs de l’essaim finissent entre eux`.
+- Récepteurs : `[essaim] réception de film.mp4 (… Mo) — émis par …`, puis la
+  vignette ; l'émetteur reçoit « Média reçu (essaim) ».
+- L'émetteur n'envoie qu'environ une copie du fichier, quel que soit le nombre
+  de récepteurs : ils se redistribuent les morceaux.
+- Une ancienne version dans le groupe : la lancer avec `CASTUNN_SANS_ESSAIM=1`
+  (ou `?essaim=off`) ; elle reçoit le fichier entier, `Envoi de … : 1 par
+  essaim, 1 en P2P`.
+- Automatique : `npm run test:essaim` (moteur, faux réseau) et
+  `npm run test:mesh` (vraies pages, empreintes comparées).
+
 ### Relais
 
 Un serveur de signalisation configuré avec un relais (`relais-turn.md`), et

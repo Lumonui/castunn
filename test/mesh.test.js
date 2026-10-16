@@ -211,7 +211,7 @@ app.whenReady().then(async () => {
         { label: `${p.nom} : image reçue de mona` });
     }
     const log = await consoleDe(m1);
-    if (!/Envoi de point\.png : 1 en P2P, 1 par WebSocket/.test(log)) throw new Error('répartition non journalisée');
+    if (!/Envoi de point\.png : 1 par essaim, 1 par WebSocket/.test(log)) throw new Error('répartition non journalisée');
   });
   fermerPages();
 
@@ -264,13 +264,72 @@ app.whenReady().then(async () => {
   if (muet) await muet.close();
   fermerPages();
 
-  /* --- 5. Quatre pages : K4 ------------------------------------------------ */
+  /* --- 5. Une ancienne version dans le groupe (sans essaim) ---------------- */
+  const e1 = await ouvrirPage('sam');
+  const e2 = await ouvrirPage('tina');
+  const e3 = await ouvrirPage('ugo-ancien', { essaim: 'off' });
+  await check('une ancienne version sans essaim reçoit le fichier entier, les autres par essaim', async () => {
+    await waitUntil(async () => (await pastille(e1)).texte === '2/2', { label: 'sam : 2/2', timeout: 20000 });
+    await sleep(500);
+    await js(e1, `(() => {
+      const octets = new Uint8Array(1024 * 1024).map((_, i) => (i * 7) & 255);
+      const dt = new DataTransfer(); dt.items.add(new File([octets], 'mixte.png', { type: 'image/png' }));
+      document.getElementById('mediaFile').files = dt.files;
+      document.getElementById('btnSendMediaFile').click(); return true; })()`);
+    for (const [p, via] of [[e2, 'essaim'], [e3, 'RTC']]) {
+      const url = await waitUntil(async () => (await vignettes(p)).find((t) => t.de === e1.id && t.image.startsWith('blob:'))?.image,
+        { label: `${p.nom} : fichier reçu`, timeout: 20000 });
+      const taille = await js(p, `fetch(${JSON.stringify(url)}).then((r) => r.arrayBuffer()).then((b) => b.byteLength)`);
+      if (taille !== 1024 * 1024) throw new Error(`${p.nom} : ${taille} octets`);
+      await waitUntil(async () => new RegExp(`Média reçu \\(${via}\\)`).test(await consoleDe(e1)),
+        { label: `accusé « ${via} »` });
+    }
+    if (!/Envoi de mixte\.png : 1 par essaim, 1 en P2P/.test(await consoleDe(e1))) throw new Error('répartition non journalisée');
+    if (!(await consoleDe(e3)).includes('[TEST] essaim désactivé')) throw new Error('mode de test non annoncé');
+  });
+  fermerPages();
+
+  /* --- 6. Quatre pages : K4 ------------------------------------------------ */
   const k = [];
   for (const nom of ['p1', 'p2', 'p3', 'p4']) k.push(await ouvrirPage(nom));
   await check('à quatre, chaque page a trois liens P2P ouverts (K4)', async () => {
     for (const p of k) {
       await waitUntil(async () => (await pastille(p)).texte === '3/3', { label: `${p.nom} : 3/3`, timeout: 25000 });
     }
+  });
+
+  // Empreinte d'un blob affiché dans une page (file:// : crypto.subtle disponible).
+  const EMPREINTE = `async (url) => {
+    const octets = await (await fetch(url)).arrayBuffer();
+    return [...new Uint8Array(await crypto.subtle.digest('SHA-256', octets))].map((x) => x.toString(16).padStart(2, '0')).join('');
+  }`;
+
+  await check('essaim à quatre : chacun reçoit le fichier exact, l’émetteur n’en envoie qu’environ une copie', async () => {
+    await sleep(500); // canaux « essaim » ouverts juste après les liens
+    const [source, ...recepteurs] = k;
+    const TAILLE = 3 * 1024 * 1024;
+    const attendu = await js(source, `(async () => {
+      const octets = new Uint8Array(${TAILLE});
+      let x = 12345; for (let i = 0; i < octets.length; i++) { x = (x * 1103515245 + 12345) >>> 0; octets[i] = x >>> 24; }
+      const fichier = new File([octets], 'essaim.png', { type: 'image/png' });
+      const dt = new DataTransfer(); dt.items.add(fichier);
+      document.getElementById('mediaFile').files = dt.files;
+      document.getElementById('btnSendMediaFile').click();
+      return (${EMPREINTE})(URL.createObjectURL(fichier));
+    })()`);
+    for (const p of recepteurs) {
+      const url = await waitUntil(async () => (await vignettes(p)).find((t) => t.de === source.id && t.image.startsWith('blob:'))?.image,
+        { label: `${p.nom} : fichier reçu par essaim`, timeout: 30000 });
+      const recu = await js(p, `(${EMPREINTE})(${JSON.stringify(url)})`);
+      if (recu !== attendu) throw new Error(`${p.nom} : empreinte différente`);
+      if (!/Média reçu \(essaim\)/.test(await consoleDe(source))) throw new Error('accusé « essaim » absent');
+    }
+    const log = await consoleDe(source);
+    if (!/Envoi de essaim\.png : 3 par essaim/.test(log)) throw new Error('répartition : ' + log.split('\n').filter((l) => l.includes('Envoi de')).join(' | '));
+    const stats = await js(source, 'window.__castunnEssaim');
+    const copies = stats.octetsEnvoyes / TAILLE;
+    console.log(`       (l’émetteur a envoyé ${copies.toFixed(2)} copie(s) ; sans essaim : 3)`);
+    if (copies > 1.6) throw new Error(`l’émetteur a envoyé ${copies.toFixed(2)} copies`);
   });
   fermerPages();
 

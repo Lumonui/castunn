@@ -36,8 +36,13 @@ export function createMesh(deps = {}) {
     onChange = () => {},     // l'état d'un lien a changé : la pastille se recalcule
     onOpen = () => {},       // canal de données ouvert
     onConnected = () => {},  // ICE connecté : le chemin peut être journalisé
-    onMessage = () => {},    // donnée reçue sur un canal
+    onMessage = () => {},    // donnée reçue sur un canal : (id, donnée, nom du canal)
     onTrack = () => {},      // piste média reçue
+    // Canaux en plus du canal principal, ouverts seulement si les deux pairs
+    // les annoncent (une ancienne version n'annonce rien : elle ne reçoit
+    // jamais de canal qu'elle ne saurait pas traiter).
+    capacites = [],
+    onCanal = () => {},      // (id, nom, 'ouvert' | 'ferme' | 'vide')
     // Une offre arrive alors que le RTC est impossible ici : on prévient
     // l'autre, qui bascule aussitôt sur le WebSocket au lieu d'attendre.
     refuser = () => {},
@@ -87,6 +92,9 @@ export function createMesh(deps = {}) {
       chemin: null,   // renseigné par la page une fois connecté
       collecte: [],   // candidats trouvés localement (le seul témoin fiable)
       minuteurs: new Set(),
+      meneur: false,        // c'est nous qui avons créé le canal principal
+      capacitesPair: null,  // ce que le pair a annoncé à l'ouverture
+      canaux: {},           // canaux annexes, par nom
       ferme: false
     };
     orphelins.delete(id);
@@ -122,6 +130,7 @@ export function createMesh(deps = {}) {
     };
 
     pc.ondatachannel = (ev) => {
+      if (ev.channel.label !== 'file') { brancherAnnexe(lien, ev.channel); return; }
       lien.dc = ev.channel;
       brancher(lien);
     };
@@ -135,7 +144,12 @@ export function createMesh(deps = {}) {
     const dc = lien.dc;
     try { dc.binaryType = 'arraybuffer'; } catch {}
     dc.bufferedAmountLowThreshold = 512 * 1024;
-    dc.onopen = () => { onChange(lien.id); onOpen(lien.id); };
+    dc.onopen = () => {
+      // Premier message du lien : ce que nous savons faire.
+      try { dc.send(JSON.stringify({ type: 'rtc-capacites', liste: capacites })); } catch {}
+      onChange(lien.id);
+      onOpen(lien.id);
+    };
     dc.onclose = () => {
       if (lien.ferme) return;
       onChange(lien.id);
@@ -148,7 +162,45 @@ export function createMesh(deps = {}) {
         relancer(lien.id);
       });
     };
-    dc.onmessage = (ev) => onMessage(lien.id, ev.data);
+    dc.onmessage = (ev) => {
+      if (typeof ev.data === 'string' && ev.data.startsWith('{"type":"rtc-capacites"')) {
+        recevoirCapacites(lien, ev.data);
+        return;
+      }
+      onMessage(lien.id, ev.data, 'file');
+    };
+  }
+
+  function recevoirCapacites(lien, texte) {
+    let liste = [];
+    try { liste = JSON.parse(texte).liste; } catch {}
+    lien.capacitesPair = Array.isArray(liste) ? liste.map(String) : [];
+    // Un seul côté crée les canaux annexes : celui qui a créé le principal.
+    if (!lien.meneur) return;
+    for (const nom of capacites) {
+      if (!lien.capacitesPair.includes(nom) || lien.canaux[nom]) continue;
+      try {
+        brancherAnnexe(lien, lien.pc.createDataChannel(nom, { ordered: true }));
+      } catch (e) {
+        report(`canal ${nom} avec ${label(lien.id)}`, e);
+      }
+    }
+  }
+
+  function brancherAnnexe(lien, dc) {
+    const nom = dc.label;
+    if (!capacites.includes(nom)) { try { dc.close(); } catch {} return; }
+    lien.canaux[nom] = dc;
+    try { dc.binaryType = 'arraybuffer'; } catch {}
+    dc.bufferedAmountLowThreshold = 256 * 1024;
+    dc.onopen = () => onCanal(lien.id, nom, 'ouvert');
+    dc.onclose = () => {
+      if (lien.canaux[nom] === dc) delete lien.canaux[nom];
+      if (!lien.ferme) onCanal(lien.id, nom, 'ferme');
+    };
+    dc.onbufferedamountlow = () => onCanal(lien.id, nom, 'vide');
+    dc.onmessage = (ev) => onMessage(lien.id, ev.data, nom);
+    if (dc.readyState === 'open') onCanal(lien.id, nom, 'ouvert');
   }
 
   function echec(lien) {
@@ -182,6 +234,7 @@ export function createMesh(deps = {}) {
     if (!disponible(id)) return null;
     const lien = liens.get(id) || creer(id);
     if (!lien.dc) {
+      lien.meneur = true;
       lien.dc = lien.pc.createDataChannel('file', { ordered: true });
       brancher(lien);
       // Filet : un pair qui ne répond jamais (sans WebRTC, ancienne version)
@@ -267,9 +320,13 @@ export function createMesh(deps = {}) {
     lien.ferme = true;
     for (const t of lien.minuteurs) clearTimeout(t);
     lien.minuteurs.clear();
+    const annexes = Object.keys(lien.canaux);
+    for (const dc of Object.values(lien.canaux)) { try { dc.close(); } catch {} }
+    lien.canaux = {};
     try { lien.dc?.close(); } catch {}
     try { lien.pc.close(); } catch {}
     liens.delete(id);
+    for (const nom of annexes) onCanal(id, nom, 'ferme');
     if (!silencieux) onChange(id);
   }
 
@@ -289,6 +346,26 @@ export function createMesh(deps = {}) {
     estOuvert: (id) => ouvert(liens.get(id)),
     /** Pairs dont le canal de données est ouvert. */
     ouverts: () => [...liens.values()].filter(ouvert).map((l) => l.id),
+
+    /** Canal annexe ouvert avec ce pair, ou null. */
+    canal(id, nom) {
+      const dc = liens.get(id)?.canaux[nom];
+      return dc && dc.readyState === 'open' ? dc : null;
+    },
+    /** Pairs avec qui un canal annexe est ouvert. */
+    avecCanal: (nom) => [...liens.values()].filter((l) => l.canaux[nom]?.readyState === 'open').map((l) => l.id),
+    /** Envoi sur un canal annexe. false s'il n'est pas ouvert. */
+    envoyerSur(id, nom, donnees) {
+      const dc = liens.get(id)?.canaux[nom];
+      if (!dc || dc.readyState !== 'open') return false;
+      try {
+        dc.send(donnees);
+        return true;
+      } catch (e) {
+        report(`envoi RTC (${nom}) à ${label(id)}`, e);
+        return false;
+      }
+    },
 
     /** Envoi sur le canal d'un pair. false si le canal n'est pas ouvert. */
     envoyer(id, donnees) {

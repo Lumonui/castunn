@@ -184,6 +184,7 @@
   import { createMesh } from './src/renderer/rtc-mesh.js';
   import { resumerMaillage } from './src/renderer/mesh-status.js';
   import { createReceptionTiles } from './src/renderer/reception-tiles.js';
+  import { createEssaim } from './src/renderer/essaim.js';
 
   /* === Etat global === */
   let socket;
@@ -310,13 +311,17 @@
    *                 Sans relais annoncé, aucune connexion n'aboutit : c'est
    *                 alors une simulation d’échec RTC réaliste.
    * ?rtc=off      : aucune connexion RTC, pour valider le repli WebSocket.
-   * Sous Electron : CASTUNN_FORCE_RELAY=1 et CASTUNN_SANS_RTC=1, que main.js
-   * traduit en paramètres d’URL. Toujours annoncés dans la console : un mode
-   * de test oublié ne doit jamais passer inaperçu.
+   * ?essaim=off   : pas d'essaim, comme une ancienne version : les fichiers
+   *                 arrivent entiers par le canal P2P principal.
+   * Sous Electron : CASTUNN_FORCE_RELAY=1, CASTUNN_SANS_RTC=1 et
+   * CASTUNN_SANS_ESSAIM=1, que main.js traduit en paramètres d’URL. Toujours
+   * annoncés dans la console : un mode de test oublié ne doit jamais passer
+   * inaperçu.
    * -------------------------------------------------------------------- */
   const PARAMS_TEST = new URLSearchParams(location.search);
   const FORCE_RELAY = PARAMS_TEST.get('forceRelay') === '1';
   const SANS_RTC = PARAMS_TEST.get('rtc') === 'off';
+  const SANS_ESSAIM = PARAMS_TEST.get('essaim') === 'off';
 
   /** Phrase expliquant l’absence de P2P, d’après le relais et les pairs. */
   function raisonSansRtc() {
@@ -549,6 +554,7 @@
     // qu'ils nous ont déjà montré reste affiché, comme avant ; seuls les
     // transferts inachevés sont abandonnés.
     maillage.fermerTout();
+    essaim.toutOublier();
     oublierRecepteurs();
     pairsSansP2p.clear();
     oublierIceConfig();
@@ -1135,7 +1141,7 @@ function showLocalImage(url){
    * attendra le suivant ; un lien qui tombe en cours d'envoi est abandonné
    * pour ce fichier, et on le dit.
    * --------------------------------------------------------------------- */
-  let envoi = null; // { p2p, ws, diffusionWs, fileId }
+  let envoi = null; // { p2p, essaim, essaimT, ws, diffusionWs, fileId, offset, taille }
 
   function beginUploadFor(file, kind, { exclure = [] } = {}) {
     const r = repartir();
@@ -1145,12 +1151,26 @@ function showLocalImage(url){
     // de la room par le WebSocket. Tout part alors par lui, à toute la room,
     // comme avant — sinon les pairs P2P recevraient tout en double.
     const diffusionWs = ws.length > 0 && !serveurSait('adressage');
+    // Pairs P2P qui savent faire l'essaim : ils se redistribuent le fichier.
+    // Les autres (ancienne version) le reçoivent entier, par l'ancien chemin.
+    const parEssaim = diffusionWs ? [] : p2p.filter((id) => maillage.canal(id, 'essaim'));
     envoi = {
-      p2p: diffusionWs ? [] : p2p,
+      p2p: diffusionWs ? [] : p2p.filter((id) => !parEssaim.includes(id)),
+      essaim: parEssaim,
+      essaimT: null,
       ws: diffusionWs ? r.tous : ws,
       diffusionWs,
-      fileId: nouveauMid()
+      fileId: nouveauMid(),
+      offset: 0,
+      taille: file.size || 0
     };
+    if (parEssaim.length) {
+      envoi.essaimT = essaim.partager(file, {
+        nom: file.name || 'fichier',
+        mime: file.type || guessMimeByExt(file.name) || 'application/octet-stream',
+        kind: kind || 'file'
+      }, parEssaim);
+    }
 
     const meta = {
       type: 'binary-meta',
@@ -1166,6 +1186,7 @@ function showLocalImage(url){
     if (envoi.ws.length) sendJSON(envoi.diffusionWs ? meta : { ...meta, to: envoi.ws });
 
     const parties = [];
+    if (envoi.essaim.length) parties.push(`${envoi.essaim.length} par essaim`);
     if (envoi.p2p.length) parties.push(`${envoi.p2p.length} en P2P`);
     if (envoi.ws.length) parties.push(`${envoi.ws.length} par WebSocket`);
     addConsole(`Envoi de ${meta.filename} : ${parties.join(', ') || 'aucun destinataire'}`);
@@ -1307,6 +1328,9 @@ function showLocalImage(url){
     // Plus aucune piste envoyée, à personne (renégociation lien par lien).
     fluxEnDirect = null;
     for (const lien of maillage.liens()) maillage.retirerPistes(lien.id);
+    // Y compris un fichier dont la poussée est finie mais que l'essaim se
+    // redistribue encore.
+    essaim.annulerTout();
     localStopAll();
     // Ce « stop » ne vise que ce que NOUS diffusons : chaque récepteur
     // n'arrête que notre vignette, jamais celles des autres émetteurs.
@@ -1416,8 +1440,11 @@ function showLocalImage(url){
       if (dc) { try { dc.bufferedAmountLowThreshold = 8 * CHUNK; } catch {} }
     }
 
+    // L'ancien envoi par morceaux ne tourne que s'il a des destinataires :
+    // l'essaim, lui, avance de son côté (essaim.partager, plus haut).
+    const parMorceaux = envoi.p2p.length > 0 || envoi.ws.length > 0;
     try {
-      while (!abortUpload && offset < file.size) {
+      while (parMorceaux && !abortUpload && offset < file.size) {
         await attendreCanaux();
         if (abortUpload) break;
         if (envoi.ws.length) await waitForWsDrain();
@@ -1425,24 +1452,39 @@ function showLocalImage(url){
         const end = Math.min(offset + CHUNK, file.size);
         await sendChunk(file.slice(offset, end));
         offset = end;
+        envoi.offset = offset;
 
         // Yield event loop tous les 16 chunks (~1 Mo) pour ne pas affamer le player local
         if ((offset / CHUNK) % 16 === 0) await new Promise(r => setTimeout(r, 0));
 
-        const ratio = Math.round(100 * offset / file.size);
-        progressText.textContent = `${ratio}%`;
-        progressBar.value = ratio;
+        majProgressionEnvoi();
       }
 
-      if (!abortUpload) await attendreCanaux();
+      if (parMorceaux && !abortUpload) await attendreCanaux();
+
+      // La poussée de l'essaim : chaque morceau parti une fois. Le stop
+      // l'interrompt (abortUpload), l'annulation prévient les membres.
+      let essaimOk = true;
+      if (envoi.essaimT) {
+        const t = envoi.essaimT;
+        while (!abortUpload && t.frontiere < t.n && !t.annule && essaim.transfert(t.num)) {
+          await Promise.race([t.termine, new Promise((r) => setTimeout(r, 200))]);
+        }
+        // Plus aucun membre (tous partis, ou récepteurs désactivés qui ont
+        // refusé) : rien d'annulé, simplement personne à servir.
+        const personne = !t.membres.size;
+        essaimOk = !abortUpload && (t.frontiere >= t.n || personne);
+        if (!essaimOk || personne) essaim.annuler(t.num);
+      }
 
       // NE FINALISE QUE SI TOUT A ÉTÉ ENVOYÉ
-      if (!abortUpload && offset === file.size) {
-        terminerEnvoi('binary-end');
+      const morceauxOk = !parMorceaux || (!abortUpload && offset === file.size);
+      if (parMorceaux) terminerEnvoi(morceauxOk ? 'binary-end' : 'binary-cancel');
+      if (morceauxOk && essaimOk) {
         const dt = (Date.now() - t0) / 1000;
-        addConsole(`Envoi terminé (${file.name}) en ${dt.toFixed(1)}s`);
+        addConsole(`Envoi terminé (${file.name}) en ${dt.toFixed(1)}s`
+          + (envoi.essaimT ? ' — les récepteurs de l’essaim finissent entre eux' : ''));
       } else {
-        terminerEnvoi('binary-cancel');
         addConsole(`Envoi annulé (${file.name})`);
       }
     } catch (e) {
@@ -1451,6 +1493,17 @@ function showLocalImage(url){
       resetUploadUI();
       envoi = null;
     }
+  }
+
+  /** Barre d'envoi : le moins avancé des deux chemins (morceaux, essaim). */
+  function majProgressionEnvoi() {
+    if (!envoi) return;
+    const parts = [];
+    if (envoi.p2p.length || envoi.ws.length) parts.push(envoi.taille ? envoi.offset / envoi.taille : 1);
+    if (envoi.essaimT) parts.push(envoi.essaimT.frontiere / envoi.essaimT.n);
+    const ratio = Math.round(100 * Math.min(1, ...parts));
+    progressText.textContent = `${ratio}%`;
+    progressBar.value = ratio;
   }
 
   function resetUploadUI(){
@@ -1670,6 +1723,7 @@ function showLocalImage(url){
       // Seul ce qui vient de cet émetteur s'arrête : ses transferts en cours,
       // sa vignette. Ce que les autres nous diffusent continue.
       for (const r of recepteursDe(qui)) r.discard();
+      essaim.oublierSource(qui);
       tuiles.arreter(qui);
       ctrlError.textContent = '';
       recvError.textContent = '';
@@ -1896,11 +1950,62 @@ function showLocalImage(url){
       if (fluxEnDirect) maillage.ajouterPistes(id, fluxEnDirect);
     },
     onConnected: (id, lien) => logRtcPath(id, lien),
-    onMessage: (id, data) => recevoirViaRtc(id, data),
+    onMessage: (id, data, canal) => (canal === 'essaim' ? essaim.recevoir(id, data) : recevoirViaRtc(id, data)),
     onTrack: (id, ev) => recevoirPiste(id, ev),
+    // Canal « essaim » sur chaque lien (src/renderer/essaim.js), si le pair
+    // le sait aussi.
+    capacites: SANS_ESSAIM ? [] : ['essaim'],
+    onCanal: (id, nom, etat) => {
+      if (nom !== 'essaim') return;
+      if (etat === 'ferme') { essaim.voisinParti(id); return; }
+      essaim.pomper(id);
+      // Lien ouvert pendant un envoi : ce pair rejoint l'essaim en cours,
+      // s'il n'est pas déjà servi par le WebSocket.
+      const t = envoi?.essaimT;
+      if (etat === 'ouvert' && t && !envoi.ws.includes(id)) essaim.ajouterMembre(t.num, id);
+    },
     refuser: (id) => sendSignal({ type: 'rtc-refus', to: id }),
     sansReponse: (id) => marquerSansP2p(id, 'ne répond pas en P2P')
   });
+
+  /* === Essaim (src/renderer/essaim.js) =====================================
+   * Les fichiers circulent entre les pairs P2P qui savent faire l'essaim :
+   * l'émetteur envoie chaque morceau une fois, les récepteurs se les
+   * redistribuent. Les autres pairs gardent l'envoi par morceaux d'avant.
+   * ===================================================================== */
+  const essaim = createEssaim({
+    moi: () => myId,
+    envoyer: (id, d) => maillage.envoyerSur(id, 'essaim', d),
+    tampon: (id) => maillage.canal(id, 'essaim')?.bufferedAmount ?? Infinity,
+    ouvert: (id) => !!maillage.canal(id, 'essaim'),
+    surAnnonce: (t) => {
+      if (ignoreMedia) {
+        sendConfirmation(`${userIP} a reçu ${t.kind} (essaim) mais Récepteur désactivé (non lu)`, t.source);
+        return false;
+      }
+      addConsole(`[essaim] réception de ${t.nom} (${formaterTaille(t.taille)}) — émis par ${peerLabel(t.source)}`);
+      return true;
+    },
+    surComplet: (t, blob) => {
+      if (ignoreMedia) return;
+      // Même suite qu'un fichier reçu d'un bloc : vignette ou téléchargement.
+      const r = recepteur(t.source, 'essaim');
+      r.begin({ mime: t.mime, kind: t.kind, filename: t.nom });
+      r.push(blob);
+      r.end();
+    },
+    surAbandon: (t, raison) => addConsole(`[essaim] ${t.nom} abandonné : ${raison}.`),
+    surProgres: (t) => { if (t === envoi?.essaimT) majProgressionEnvoi(); }
+  });
+
+  // Compteurs (octets envoyés, doublons) : diagnostic et tests.
+  window.__castunnEssaim = essaim.stats;
+
+  function formaterTaille(o) {
+    if (o >= 1e9) return `${(o / 1e9).toFixed(1)} Go`;
+    if (o >= 1e6) return `${(o / 1e6).toFixed(1)} Mo`;
+    return `${Math.ceil(o / 1e3)} ko`;
+  }
 
   /** Ouvre le lien vers un pair si c'est à nous de mener. */
   function relierSiNousMenons(id) {
@@ -2028,6 +2133,7 @@ function showLocalImage(url){
 
   if (FORCE_RELAY) addConsole('[TEST] relais forcé (forceRelay=1) : seules les connexions par relais TURN sont tentées.');
   if (SANS_RTC) addConsole('[TEST] RTC désactivé (rtc=off) : tout passe par le WebSocket.');
+  if (SANS_ESSAIM) addConsole('[TEST] essaim désactivé (essaim=off) : les fichiers arrivent entiers, comme avec une ancienne version.');
 
   // Témoin de bon chargement, relevé par le garde-fou ci-dessous.
   window.__castunnReady = true;
