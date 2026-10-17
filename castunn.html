@@ -162,6 +162,16 @@
 			  Favorise les connexions directes avec les pairs hors de votre réseau. Décocher supprime aussitôt les redirections.
 			</p>
 		  </div>
+		  <div class="settings-row">
+			<label class="settings-label" for="qualitePartage">Limiter la qualité du partage d'écran</label>
+			<select id="qualitePartage" class="settings-input">
+			  <option value="1080p30">1080p, 30 images/s</option>
+			  <option value="natif">Natif (résolution de l'écran)</option>
+			</select>
+			<p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			  Chaque destinataire coûte un encodage vidéo : la limite soulage l'ordinateur sur un grand écran, à plusieurs. S'applique au prochain partage.
+			</p>
+		  </div>
 		  <span id="appVersion">Castunn</span>
 		  <div class="settings-actions">
 			<button type="button" class="btn" id="settingsCancel">Annuler</button>
@@ -173,8 +183,9 @@
 
   <script type="module">
   import {
-    cleanPeerIp, formatSelfName, guessMimeByExt
+    cleanPeerIp, formatSelfName, guessMimeByExt, pickRenderTarget
   } from './src/renderer/protocol.js';
+  import { createFluxLecture, lirePlage, entetesReponse } from './src/renderer/flux-lecture.js';
   import { createMediaReceiver } from './src/renderer/media-receiver.js';
   import { createPeerRegistry } from './src/renderer/peers.js';
   import { resolveSignalUrl, buildWsUrl } from './src/renderer/signal-url.js';
@@ -739,7 +750,17 @@
   let fluxEnDirect = null;
 
   function localStopAll(){
-	if (localStream) { localStream.getTracks().forEach(t => t.stop()); localStream = null; }
+	if (localStream) {
+	  // La capture s'arrête (Stop, ou un autre média qui la remplace) : plus
+	  // aucune piste envoyée aux pairs, sinon ils gardent une image figée.
+	  if (fluxEnDirect === localStream) {
+	    fluxEnDirect = null;
+	    for (const lien of maillage.liens()) maillage.retirerPistes(lien.id);
+	  }
+	  localStream.getTracks().forEach(t => t.stop());
+	  localStream = null;
+	}
+	localClose.hidden = false;
 	try { localVideo.srcObject = null; } catch {} // Couper capture d'écran
 	localVideo.muted = false;
 	
@@ -1116,6 +1137,9 @@ function showLocalImage(url){
             // Son lien et ses transferts inachevés n'ont plus d'objet ; ce qu'il
             // nous a déjà montré reste affiché, comme avant.
             if (maillage.lien(msg.peerId)) addConsole(`[RTC] Lien avec ${peerLabel(msg.peerId)} fermé : départ du pair.`);
+            // Un direct n'a plus rien à montrer quand son émetteur est parti ;
+            // un média reçu, si (on peut continuer à le regarder).
+            retirerDirect(msg.peerId);
             maillage.fermer(msg.peerId);
             oublierRecepteurs(msg.peerId);
             pairsSansP2p.delete(msg.peerId);
@@ -1336,6 +1360,24 @@ function showLocalImage(url){
   
   const btnShareScreen = document.getElementById('btnShareScreen');
 
+  /* --- Qualité du partage d'écran (Paramètres) ------------------------------
+   * L'émetteur encode son écran une fois par destinataire : en natif sur un
+   * écran 1440p ou 4K, à plusieurs, le processeur sature (fenêtres « ne
+   * répond pas », constaté). Plafond par défaut : 1080p, 30 images/s (mesuré :
+   * la capture respecte ces maximums). Préférence du poste, dans localStorage.
+   * --------------------------------------------------------------------- */
+  const QUALITE_CLE = 'castunn.qualitePartage';
+  const selectQualite = document.getElementById('qualitePartage');
+  try { if (localStorage.getItem(QUALITE_CLE) === 'natif') selectQualite.value = 'natif'; } catch {}
+  selectQualite.addEventListener('change', () => {
+    try { localStorage.setItem(QUALITE_CLE, selectQualite.value); } catch {}
+  });
+  function contraintesPartage() {
+    return selectQualite.value === 'natif'
+      ? true
+      : { width: { max: 1920 }, height: { max: 1080 }, frameRate: { max: 30 } };
+  }
+
   btnShareScreen.onclick = async () => {
   if (!maillage.ouverts().length) {
     // Le relais change le diagnostic : sans lui, certains réseaux ne laissent
@@ -1345,13 +1387,16 @@ function showLocalImage(url){
     return;
   }
   try {
-    localStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    localStream = await navigator.mediaDevices.getDisplayMedia({ video: contraintesPartage(), audio: true });
 
     // 3. Affichage local (retour vidéo)
     localPlaceholder.classList.add('hidden');
     localVideo.srcObject = localStream;
     localVideo.classList.remove('hidden');
     localVideo.muted = true; // anti Larsen
+    // Pas de « Fermer » pendant un partage : il couperait la capture sans
+    // prévenir personne. C'est « Stop » qui arrête le direct, pour tous.
+    localClose.hidden = true;
     showLocalPanel();
     localVideo.play().catch(()=>{});
 
@@ -2037,22 +2082,113 @@ function showLocalImage(url){
         return false;
       }
       addConsole(`[essaim] réception de ${t.nom} (${formaterTaille(t.taille)}) — émis par ${peerLabel(t.source)}`);
+      // Après le retour : le transfert n'est rangé dans l'essaim qu'ensuite.
+      setTimeout(() => lireEnRecevant(t), 0);
       return true;
     },
     surComplet: (t, blob) => {
       if (ignoreMedia) return;
+      if (t.enLecture) {
+        // Déjà à l'écran depuis l'annonce : on ne relance pas la lecture, on
+        // sert désormais depuis le fichier complet (navigation sans attente).
+        lecture.terminer(t.num, blob);
+        sendConfirmation(`${getDisplayName()} — Média reçu (essaim) : ${t.nom} (${t.mime || 'type inconnu'})`, t.source);
+        return;
+      }
       // Même suite qu'un fichier reçu d'un bloc : vignette ou téléchargement.
       const r = recepteur(t.source, 'essaim');
       r.begin({ mime: t.mime, kind: t.kind, filename: t.nom });
       r.push(blob);
       r.end();
     },
-    surAbandon: (t, raison) => addConsole(`[essaim] ${t.nom} abandonné : ${raison}.`),
+    surAbandon: (t, raison) => {
+      addConsole(`[essaim] ${t.nom} abandonné : ${raison}.`);
+      lecture.fermer(t.num);
+    },
     surProgres: (t) => { if (t === envoi?.essaimT) majProgressionEnvoi(); }
   });
 
   // Compteurs (octets envoyés, doublons) : diagnostic et tests.
   window.__castunnEssaim = essaim.stats;
+
+  /* === Lecture pendant le téléchargement (src/renderer/flux-lecture.js) =====
+   * Une vidéo ou une musique reçue par l'essaim s'affiche dès son annonce : le
+   * lecteur lit au fil de l'arrivée des morceaux, et navigue où il veut (les
+   * morceaux voulus sont demandés en priorité). Le transport :
+   *  - application : protocole maison castunn-flux:// (flux-protocole.js) ;
+   *  - navigateur en https (ou localhost) : service worker (sw-flux.js) ;
+   *  - sinon (http sur le réseau local) : affichage une fois reçu, comme avant.
+   * ===================================================================== */
+  const lecture = createFluxLecture({ essaim });
+  let adresseFlux = null;           // (num) => adresse, ou null sans transport
+  const fluxParSource = new Map();  // émetteur -> numéro du flux qu'il nous montre
+
+  /** Les deux questions des transports : « ouvrir » (en-têtes) et « octets ». */
+  async function repondreFlux(q) {
+    if (q?.type === 'ouvrir') {
+      const info = lecture.info(q.num);
+      if (!info) return null;
+      const plage = lirePlage(q.plage, info.taille);
+      if (!plage) return { status: 416, headers: { 'Content-Range': `bytes */${info.taille}` } };
+      return { ...entetesReponse(plage, info), debut: plage.debut, fin: plage.fin };
+    }
+    if (q?.type === 'octets') return lecture.octets(q.num, q.pos, q.fin);
+    return null;
+  }
+
+  if (window.castunnFlux) {
+    window.castunnFlux.servir(repondreFlux)
+      .then((id) => { adresseFlux = (num) => `castunn-flux://p${id}/${num}`; })
+      .catch((e) => reportError('lecture pendant le téléchargement', e));
+  } else if ('serviceWorker' in navigator && window.isSecureContext && /^https?:$/.test(location.protocol)) {
+    navigator.serviceWorker.addEventListener('message', async (e) => {
+      const q = e.data?.fluxEssaim;
+      if (!q || !e.ports[0]) return;
+      let r = null;
+      try { r = await repondreFlux(q); } catch { r = null; }
+      e.ports[0].postMessage(r, r instanceof ArrayBuffer ? [r] : []);
+    });
+    navigator.serviceWorker.register('sw-flux.js')
+      .then(() => navigator.serviceWorker.ready)
+      .then(() => {
+        // Le service worker ne sert que les pages qu'il contrôle (dès sa
+        // première activation, grâce à clients.claim).
+        adresseFlux = (num) => (navigator.serviceWorker.controller
+          ? new URL(`flux-essaim/${num}`, location.href).href : null);
+      })
+      .catch((e) => addConsole(`[essaim] lecture pendant le téléchargement indisponible : ${e.message}`));
+  }
+
+  /** Affiche tout de suite une vidéo ou une musique annoncée par l'essaim. */
+  function lireEnRecevant(t) {
+    if (ignoreMedia || !essaim.transfert(t.num)) return;
+    const cible = pickRenderTarget({ mime: t.mime, kind: t.kind, canPlayVideo: peutLireVideo });
+    const url = (cible === 'video' || cible === 'audio') && adresseFlux ? adresseFlux(t.num) : null;
+    if (!url) return; // affiché une fois complet, par le chemin habituel
+    const ancien = fluxParSource.get(t.source);
+    if (ancien !== undefined) lecture.fermer(ancien);
+    fluxParSource.set(t.source, t.num);
+    lecture.ouvrir(t.num, { taille: t.taille, mime: t.mime, taillePiece: t.taillePiece });
+    t.enLecture = true;
+    // Les autres vignettes de cet émetteur (transferts par l'ancien chemin) s'effacent.
+    for (const r of recepteursDe(t.source)) r.discard();
+    if (cible === 'video') {
+      tuiles.afficherVideo(t.source, url, {
+        mime: t.mime,
+        nom: t.nom,
+        // Format illisible : on attend le fichier complet, qui suivra le
+        // chemin habituel (téléchargement proposé).
+        surEchec: () => {
+          t.enLecture = false;
+          lecture.fermer(t.num);
+          addConsole(`[essaim] ${t.nom} : lecture impossible pendant le téléchargement, affichage une fois reçu.`);
+        }
+      });
+    } else {
+      tuiles.afficherAudio(t.source, url);
+    }
+    addConsole(`[essaim] lecture pendant le téléchargement : ${t.nom}`);
+  }
 
   function formaterTaille(o) {
     if (o >= 1e9) return `${(o / 1e9).toFixed(1)} Go`;
@@ -2157,14 +2293,41 @@ function showLocalImage(url){
   }
 
   /** Flux en direct reçu (partage d'écran) : dans la vignette de son émetteur. */
+  const fluxRefuses = new Set(); // flux déjà signalés « non lus » (un accusé par flux)
   function recevoirPiste(de, ev) {
-    if (ignoreMedia) return;
     const flux = ev.streams[0];
     if (!flux) return;
+    // Récepteur désactivé : on jette, et on le dit à l'émetteur, comme pour
+    // les autres médias. Pistes audio et vidéo arrivent séparément : un seul accusé.
+    if (ignoreMedia) {
+      if (!fluxRefuses.has(flux.id)) {
+        fluxRefuses.add(flux.id);
+        sendConfirmation(`${userIP} a reçu le flux écran en direct (RTC) mais Récepteur désactivé (non lu)`, de);
+      }
+      return;
+    }
     // Une piste audio et une piste vidéo arrivent séparément : un seul accusé.
     if (tuiles.afficherFlux(de, flux)) {
       sendConfirmation(`${userIP} a reçu le flux écran en direct (RTC)`, de);
+      // Partage terminé sans « stop » (l'émetteur est passé à un autre
+      // média) : ses pistes sont retirées. La vignette ne garde pas une
+      // image figée — sauf si elle montre déjà autre chose.
+      flux.onremovetrack = () => {
+        if (flux.getTracks().length) return;
+        retirerDirect(de, flux);
+      };
     }
+    // Lien fermé net (émetteur parti, fenêtre fermée) : ses pistes se
+    // terminent, sans « removetrack ».
+    ev.track.addEventListener('ended', () => {
+      if (flux.getTracks().every((t) => t.readyState === 'ended')) retirerDirect(de, flux);
+    });
+  }
+
+  /** Retire la vignette d'un émetteur si elle montre un direct (ce flux-là, ou n'importe lequel). */
+  function retirerDirect(de, flux = null) {
+    const src = tuiles.lecteur(de)?.srcObject;
+    if (src && (!flux || src === flux)) tuiles.arreter(de);
   }
 	
   // Par défaut avant toute interaction : mode récepteur, désactivé

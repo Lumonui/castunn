@@ -10,9 +10,13 @@
 
 const path = require('path');
 const net = require('net');
-const { app, ipcMain, BrowserWindow } = require('electron');
+const { app, ipcMain, BrowserWindow, protocol } = require('electron');
 
 const PROJECT = path.join(__dirname, '..');
+
+// main.js est chargé après le démarrage, trop tard pour déclarer le schéma
+// de lecture : on le fait à sa place, comme lui le fait au lancement.
+require(path.join(PROJECT, 'flux-protocole.js')).declarerSchema(protocol);
 const results = [];
 
 async function check(name, fn) {
@@ -59,7 +63,7 @@ app.whenReady().then(async () => {
 
   await check('les canaux attendus par l\'interface sont enregistrés', () => {
     for (const canal of ['server-start', 'server-stop', 'server-status', 'server-discover',
-                         'webrtc-ports', 'port-forwarding-status', 'port-forwarding-set']) {
+                         'webrtc-ports', 'port-forwarding-status', 'port-forwarding-set', 'flux-inscription']) {
       assert(ipcMain._invokeHandlers.has(canal), `canal manquant : ${canal}`);
     }
   });

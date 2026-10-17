@@ -311,6 +311,7 @@ export function createEssaim(deps = {}) {
     // La source pousse dans l'ordre : un morceau vu, d'où qu'il vienne, prouve
     // qu'elle est passée par là.
     if (index >= t.frontiere) t.frontiere = index + 1;
+    reveillerLecteurs(t, index);
 
     // Poussé par la source : on relaie aux autres membres qui ne l'ont pas.
     if (type === RELAYER && de === t.source) {
@@ -321,6 +322,70 @@ export function createEssaim(deps = {}) {
     }
     if (t.nbRecus % 16 === 0) surProgres(t);
     if (t.nbRecus === t.n) terminer(t);
+  }
+
+  /* --- Lecture pendant le téléchargement ---------------------------------- */
+
+  // num -> index -> [{ ok, ko }] : lecteurs qui attendent un morceau précis.
+  const lecteurs = new Map();
+
+  function reveillerLecteurs(t, index) {
+    const parIndex = lecteurs.get(t.num);
+    const attente = parIndex?.get(index);
+    if (!attente) return;
+    parIndex.delete(index);
+    const donnees = t.pieces?.[index];
+    for (const l of attente) l.ok(donnees);
+  }
+
+  function rejeterLecteurs(num, raison) {
+    const parIndex = lecteurs.get(num);
+    if (!parIndex) return;
+    lecteurs.delete(num);
+    for (const attente of parIndex.values()) for (const l of attente) l.ko(new Error(raison));
+  }
+
+  /**
+   * Demande tout de suite les morceaux voulus par le lecteur, sans attendre
+   * que la poussée les dépasse : à qui les a (le moins chargé), sinon à la
+   * source, qui a tout. Une demande récente (moins d'1 s) n'est pas répétée.
+   */
+  function prioriser(num, indices) {
+    const t = transferts.get(num);
+    if (!t || t.role !== 'pair' || t.complet || t.annule) return;
+    const now = maintenant();
+    const voisins = voisinsDe(t);
+    const parVoisin = new Map();
+    for (const index of indices) {
+      if (index < 0 || index >= t.n || t.possede[index]) continue;
+      const d = t.demandes.get(index);
+      if (d && now - d.t < 1000) continue;
+      let choix = null;
+      for (const id of voisins) {
+        if (id === t.source || !t.possedeDe.get(id)?.[index]) continue;
+        if (!choix || tampon(id) < tampon(choix)) choix = id;
+      }
+      if (!choix && voisins.includes(t.source)) choix = t.source;
+      if (!choix) continue;
+      t.demandes.set(index, { de: choix, t: now });
+      if (!parVoisin.has(choix)) parVoisin.set(choix, []);
+      parVoisin.get(choix).push(index);
+    }
+    for (const [id, liste] of parVoisin) json(id, { t: 'demande', num, i: liste });
+  }
+
+  /** Un morceau, dès qu'il est là (ArrayBuffer), ou null si le transfert n'existe plus. */
+  function lirePiece(num, index) {
+    const t = transferts.get(num);
+    if (!t || index < 0 || index >= t.n) return Promise.resolve(null);
+    if (t.complet || t.role === 'source') return donneesPiece(t, index);
+    if (t.possede[index]) return Promise.resolve(t.pieces[index]);
+    return new Promise((ok, ko) => {
+      if (!lecteurs.has(num)) lecteurs.set(num, new Map());
+      const parIndex = lecteurs.get(num);
+      if (!parIndex.has(index)) parIndex.set(index, []);
+      parIndex.get(index).push({ ok, ko });
+    });
   }
 
   function terminer(t) {
@@ -398,6 +463,7 @@ export function createEssaim(deps = {}) {
     if (t.annule) return;
     t.annule = true;
     transferts.delete(t.num);
+    rejeterLecteurs(t.num, raison);
     for (const f of files.values()) {
       for (let k = f.length - 1; k >= 0; k--) if (f[k].num === t.num) f.splice(k, 1);
     }
@@ -505,6 +571,8 @@ export function createEssaim(deps = {}) {
     partager,
     ajouterMembre,
     recevoir,
+    prioriser,
+    lirePiece,
     /** Un canal essaim s'est vidé ou ouvert : on relance l'envoi. */
     pomper: (id) => { pomper(id); reveiller(); },
     /** Un voisin est parti : ce qu'on lui destinait est abandonné. */

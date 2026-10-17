@@ -1,4 +1,5 @@
-const { app, BrowserWindow, desktopCapturer, session, ipcMain, dialog } = require('electron');
+const { app, BrowserWindow, desktopCapturer, session, ipcMain, dialog, protocol, webContents } = require('electron');
+const { declarerSchema, servirFlux } = require('./flux-protocole.js');
 const { fork, execFile } = require('child_process');
 const {
   WEBRTC_UDP_PORTS, etatPortsWebRTC, appliquerPlageWebRTC, plageChromium, debutValide
@@ -50,6 +51,10 @@ function claimOwnUserDataDir() {
 }
 
 const instancePrincipale = claimOwnUserDataDir();
+
+// Lecture pendant le téléchargement : schéma castunn-flux://, privilégié, donc
+// déclaré avant whenReady (voir flux-protocole.js).
+declarerSchema(protocol, app);
 
 // URL FIXE ET PERMANENTE : ce petit fichier "aiguilleur" ne bouge jamais,
 // même si l'hébergement des VRAIES mises à jour change plus tard (ex: ton domaine).
@@ -430,6 +435,9 @@ app.whenReady().then(() => {
     return { ...res, firewall: fw };
   });
   ipcMain.handle('server-stop',   () => killServer());
+
+  // Le lecteur vidéo lit un fichier encore en cours de réception.
+  servirFlux({ protocol, ipcMain, webContents });
 
   // État de la plage UDP, pour que la console de l’app puisse le dire.
   ipcMain.handle('webrtc-ports', () => etatPortsWebRTC(plageCourante));

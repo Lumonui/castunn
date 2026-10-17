@@ -100,6 +100,17 @@ Trois Castunn ou plus, reliés en P2P (pastille `2/2`, `3/3`…).
 - Automatique : `npm run test:essaim` (moteur, faux réseau) et
   `npm run test:mesh` (vraies pages, empreintes comparées).
 
+### Lecture pendant le téléchargement
+
+Une grosse vidéo envoyée à au moins un autre Castunn.
+- Récepteur : `[essaim] lecture pendant le téléchargement : film.mp4` ; la
+  vidéo démarre sans attendre la fin, et la barre de lecture permet d'aller
+  plus loin (les morceaux voulus sont demandés en priorité).
+- Dans un navigateur : seulement en https (ou sur localhost) ; en http sur le
+  réseau local, la vidéo s'affiche une fois reçue, comme avant.
+- Automatique : `npm run test:lecture` (vraie vidéo, application et service
+  worker).
+
 ### Relais
 
 Un serveur de signalisation configuré avec un relais (`relais-turn.md`), et

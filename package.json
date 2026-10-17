@@ -13,12 +13,13 @@
     "test:essaim": "node test/essaim.test.mjs",
     "test:ui": "electron test/renderer.test.js",
     "test:main": "electron test/main.test.js",
-    "test:all": "npm run test:unit && npm run test:essaim && npm run test:nat && npm test && npm run test:ui && npm run test:rtc && npm run test:mesh && npm run test:turn && npm run test:main",
+    "test:all": "npm run test:unit && npm run test:essaim && npm run test:nat && npm test && npm run test:ui && npm run test:rtc && npm run test:mesh && npm run test:lecture && npm run test:turn && npm run test:main",
     "dist": "electron-builder -w",
     "test:rtc": "electron test/rtc.test.js",
     "test:nat": "node test/nat.test.js",
     "test:turn": "electron test/turn.test.js",
-    "test:mesh": "electron test/mesh.test.js"
+    "test:mesh": "electron test/mesh.test.js",
+    "test:lecture": "electron test/lecture.test.js"
   },
   "dependencies": {
     "electron-updater": "^6.3.0",

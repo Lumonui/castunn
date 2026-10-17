@@ -6,6 +6,7 @@
 import {
   createEssaim, encoderPiece, decoderPiece, enPlages, dePlages, TAILLE_PIECE, RELAYER, SIMPLE
 } from '../src/renderer/essaim.js';
+import { createFluxLecture, lirePlage, entetesReponse } from '../src/renderer/flux-lecture.js';
 
 const cases = [];
 const results = [];
@@ -268,6 +269,72 @@ test('« stop » de l’émetteur : le récepteur oublie son transfert', async (
   eq(n.b.essaim.transferts().length, 0);
   eq(n.b.abandons, ['stop']);
   n.a.essaim.annuler(t.num);
+});
+
+/* --------------------- lecture pendant le téléchargement ----------------- */
+
+test('les plages HTTP du lecteur sont lues et bornées', () => {
+  eq(lirePlage(null, 1000), { debut: 0, fin: 999, partielle: false }, 'sans Range : tout');
+  eq(lirePlage('bytes=0-', 1000), { debut: 0, fin: 999, partielle: true });
+  eq(lirePlage('bytes=900-5000', 1000), { debut: 900, fin: 999, partielle: true }, 'fin bornée');
+  eq(lirePlage('bytes=-100', 1000), { debut: 900, fin: 999, partielle: true }, 'les 100 derniers');
+  eq(lirePlage('bytes=1000-', 1000), null, 'au-delà du fichier');
+  eq(lirePlage('bytes=5-2', 1000), null);
+  eq(lirePlage('octets=0-', 1000), null, 'unité inconnue');
+  const e = entetesReponse({ debut: 10, fin: 19, partielle: true }, { taille: 100, mime: 'video/mp4' });
+  eq([e.status, e.headers['Content-Range'], e.headers['Content-Length']], [206, 'bytes 10-19/100', '10']);
+});
+
+/** Deux pairs, débit faible : la poussée met plusieurs secondes à tout livrer. */
+function lectureLente() {
+  const r = reseau({ debit: 16 * 1024 });
+  const a = r.noeud('a'), b = r.noeud('b');
+  r.relier('a', 'b');
+  const f = fichier(120 * TAILLE_PIECE + 77);
+  const t = a.essaim.partager(f, meta, ['b']);
+  const lecture = createFluxLecture({ essaim: b.essaim });
+  lecture.ouvrir(t.num, { taille: f.size, mime: 'video/mp4', taillePiece: TAILLE_PIECE });
+  return { r, a, b, f, t, lecture };
+}
+
+test('le lecteur obtient tout de suite une plage loin devant la poussée (navigation)', async () => {
+  const { a, b, f, t, lecture } = lectureLente();
+  await attendre(() => b.essaim.transfert(t.num), 3000, 'annonce reçue');
+  const pos = 110 * TAILLE_PIECE + 5;           // l'index d'un MP4, en fin de fichier
+  const t0 = Date.now();
+  const octets = await lecture.octets(t.num, pos);
+  const duree = Date.now() - t0;
+  ok(t.frontiere < 100, `la poussée n’y était pas encore (frontière ${t.frontiere})`);
+  ok(duree < 1500, `obtenu en ${duree} ms`);
+  const attendu = new Uint8Array(await f.slice(pos, 111 * TAILLE_PIECE).arrayBuffer());
+  eq([...new Uint8Array(octets)].slice(0, 32), [...attendu].slice(0, 32), 'bons octets');
+  eq(octets.byteLength, attendu.length, 'jusqu’à la fin du morceau');
+  a.essaim.annuler(t.num);
+});
+
+test('une fois complet, le lecteur est servi depuis le fichier, même l’essaim terminé', async () => {
+  const r = reseau();
+  const a = r.noeud('a'), b = r.noeud('b');
+  r.relier('a', 'b');
+  const f = fichier(10 * TAILLE_PIECE);
+  const t = a.essaim.partager(f, meta, ['b']);
+  const lecture = createFluxLecture({ essaim: b.essaim });
+  lecture.ouvrir(t.num, { taille: f.size, mime: 'video/mp4', taillePiece: TAILLE_PIECE });
+  await attendre(() => b.complets.length, 5000, 'complet');
+  lecture.terminer(t.num, b.complets[0].blob);
+  await attendre(() => !b.essaim.transfert(t.num), 5000, 'essaim terminé et oublié');
+  const octets = await lecture.octets(t.num, 3 * TAILLE_PIECE + 10, 3 * TAILLE_PIECE + 19);
+  eq([...new Uint8Array(octets)], [...new Uint8Array(await f.slice(3 * TAILLE_PIECE + 10, 3 * TAILLE_PIECE + 20).arrayBuffer())]);
+});
+
+test('transfert abandonné pendant la lecture : le lecteur reçoit « fin », sans rester suspendu', async () => {
+  const { a, b, t, lecture } = lectureLente();
+  await attendre(() => b.essaim.transfert(t.num), 3000, 'annonce reçue');
+  const enAttente = lecture.octets(t.num, 100 * TAILLE_PIECE);
+  b.essaim.oublierSource('a');     // « stop » de l'émetteur
+  eq(await enAttente, null);
+  eq(await lecture.octets(t.num, 0).then((o) => o?.byteLength ?? null), null, 'plus rien à lire');
+  a.essaim.annuler(t.num);
 });
 
 /* ------------------------------------------------------------------------ */

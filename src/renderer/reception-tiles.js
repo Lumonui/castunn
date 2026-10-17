@@ -103,10 +103,16 @@ export function createReceptionTiles({
       lire(t.audio);
     },
 
-    afficherVideo(de, url, { mime = '', nom = 'video.mp4' } = {}) {
+    /**
+     * `surEchec` : lecture pendant le téléchargement. L'adresse n'est alors
+     * qu'un flux : en cas d'échec, on prévient au lieu de la « télécharger »,
+     * et l'appelant se rabat sur le fichier complet.
+     */
+    afficherVideo(de, url, { mime = '', nom = 'video.mp4', surEchec = null } = {}) {
       // Hors Electron, un format que le lecteur déclare inconnu part en
       // téléchargement plutôt que d'afficher un lecteur vide.
       if (mime && !estElectron && !peutLireVideo(mime)) {
+        if (surEchec) { surEchec(); return; }
         log(`Vidéo non supportée (${mime}), téléchargement.`);
         telecharger(url, nom);
         return;
@@ -115,6 +121,11 @@ export function createReceptionTiles({
       vider(t);
       t.video.src = url;
       t.video.classList.remove('hidden');
+      if (surEchec) {
+        t.video.onerror = () => { t.video.onerror = null; surEchec(); };
+        lire(t.video);
+        return;
+      }
       t.video.onerror = () => {
         log(`Lecture impossible (${mime || 'inconnu'}), téléchargement.`);
         telecharger(url, nom);

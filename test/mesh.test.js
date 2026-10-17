@@ -289,7 +289,73 @@ app.whenReady().then(async () => {
   });
   fermerPages();
 
-  /* --- 6. Quatre pages : K4 ------------------------------------------------ */
+  /* --- 6. Partage d'écran ---------------------------------------------------
+   * La capture est remplacée par un canvas animé : le reste (pistes, liens,
+   * renégociation, vignette) est le vrai chemin.
+   * ---------------------------------------------------------------------- */
+  const s1 = await ouvrirPage('vera');
+  const s2 = await ouvrirPage('wim');
+  const CAPTURE = `navigator.mediaDevices.getDisplayMedia = async (contraintes) => {
+    window.__contraintesPartage = contraintes;
+    const c = document.createElement('canvas'); c.width = 160; c.height = 90;
+    const g = c.getContext('2d'); let i = 0;
+    setInterval(() => { g.fillStyle = 'hsl(' + (i++ % 360) + ',80%,50%)'; g.fillRect(0, 0, 160, 90); }, 50);
+    return c.captureStream(20);
+  }; true`;
+  const fluxChez = (p, de) => js(p, `(() => { const t = document.querySelector('#receptions .tuile[data-de="${de}"] video');
+    return !!(t && t.srcObject && t.srcObject.getTracks().length); })()`);
+  await check('partage d’écran vers un récepteur désactivé : l’émetteur est prévenu « non lu »', async () => {
+    await waitUntil(async () => (await pastille(s1)).texte === 'Connecté', { label: 'vera reliée', timeout: 20000 });
+    await js(s2, 'document.getElementById("btnDeactivate").click(); true');
+    await js(s1, CAPTURE);
+    await js(s1, 'document.getElementById("btnShareScreen").click(); true');
+    await waitUntil(async () => /flux écran en direct \(RTC\) mais Récepteur désactivé \(non lu\)/.test(await consoleDe(s1)),
+      { label: 'accusé « non lu »' });
+    await sleep(500);
+    if (await fluxChez(s2, s1.id)) throw new Error('le flux est affiché malgré le récepteur désactivé');
+    if (compter(await consoleDe(s1), /flux écran en direct/g) !== 1) throw new Error('accusé en double');
+    if (!(await js(s1, 'document.getElementById("localClose").hidden'))) throw new Error('« Fermer » visible pendant le partage');
+    const video = (await js(s1, 'window.__contraintesPartage')).video;
+    if (video?.width?.max !== 1920 || video?.height?.max !== 1080 || video?.frameRate?.max !== 30) {
+      throw new Error('qualité par défaut : ' + JSON.stringify(video));
+    }
+    await js(s1, 'document.getElementById("btnStop").click(); true');
+    if (await js(s1, 'document.getElementById("localClose").hidden')) throw new Error('« Fermer » toujours masqué après Stop');
+  });
+
+  await check('le direct s’arrête chez le récepteur dès que la capture cesse, même sans Stop', async () => {
+    await js(s2, 'document.getElementById("btnActivate").click(); true');
+    // Qualité « Natif » choisie dans les Paramètres : aucune limite demandée.
+    await js(s1, `const q = document.getElementById('qualitePartage'); q.value = 'natif';
+      q.dispatchEvent(new Event('change')); true`);
+    await js(s1, 'document.getElementById("btnShareScreen").click(); true');
+    await waitUntil(() => fluxChez(s2, s1.id), { label: 'flux affiché chez wim' });
+    const video = (await js(s1, 'window.__contraintesPartage')).video;
+    if (video !== true) throw new Error('qualité native : ' + JSON.stringify(video));
+    if ((await js(s1, `localStorage.getItem('castunn.qualitePartage')`)) !== 'natif') throw new Error('choix non mémorisé');
+    await js(s1, `localStorage.removeItem('castunn.qualitePartage'); true`);
+    // L'ancien piège : « Fermer » (ou un autre média) coupait la capture sans
+    // retirer les pistes, et le récepteur gardait une image figée.
+    await js(s1, 'document.getElementById("localClose").click(); true');
+    await waitUntil(async () => !(await fluxChez(s2, s1.id)), { label: 'vignette du direct retirée chez wim' });
+  });
+
+  await check('l’émetteur d’un direct s’en va : sa vignette disparaît, celle d’un média reçu reste', async () => {
+    const s3 = await ouvrirPage('xena');
+    await waitUntil(async () => (await pastille(s2)).texte === '2/2', { label: 'wim : 2/2', timeout: 20000 });
+    await envoyerUrl(s3, 'image', 'https://example.invalid/de-xena.png');
+    await js(s1, 'document.getElementById("btnShareScreen").click(); true');
+    await waitUntil(() => fluxChez(s2, s1.id), { label: 'direct de vera chez wim' });
+    await waitUntil(async () => (await vignettes(s2)).some((t) => t.de === s3.id), { label: 'image de xena chez wim' });
+    const idS1 = s1.id;
+    fermerPage(s1);   // fenêtre fermée net, sans « Stop »
+    fermerPage(s3);
+    await waitUntil(async () => !(await vignettes(s2)).some((t) => t.de === idS1), { label: 'vignette du direct retirée' });
+    if (!(await vignettes(s2)).some((t) => t.de === s3.id)) throw new Error('l’image de xena a disparu avec son émetteur');
+  });
+  fermerPages();
+
+  /* --- 7. Quatre pages : K4 ------------------------------------------------ */
   const k = [];
   for (const nom of ['p1', 'p2', 'p3', 'p4']) k.push(await ouvrirPage(nom));
   await check('à quatre, chaque page a trois liens P2P ouverts (K4)', async () => {

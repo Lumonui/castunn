@@ -14,6 +14,20 @@ contextBridge.exposeInMainWorld('serverControl', {
   discover: (opts) => ipcRenderer.invoke('server-discover', opts || {}),
 });
 
+// Lecture pendant le téléchargement (flux-protocole.js) : le lecteur vidéo
+// interroge castunn-flux://, le processus principal relaie ses questions à la
+// page, qui répond. `servir` renvoie l'identifiant à mettre dans les adresses.
+contextBridge.exposeInMainWorld('castunnFlux', {
+  servir: (repondre) => {
+    ipcRenderer.on('flux-question', async (_e, q) => {
+      let reponse = null;
+      try { reponse = await repondre(q); } catch { reponse = null; }
+      ipcRenderer.send('flux-reponse', { id: q.id, reponse });
+    });
+    return ipcRenderer.invoke('flux-inscription');
+  }
+});
+
 // Plage de ports UDP réservée à WebRTC : l’interface la journalise au
 // démarrage, pour qu’une plage saturée se voie au lieu de dégrader en silence.
 contextBridge.exposeInMainWorld('rtcPorts', {
