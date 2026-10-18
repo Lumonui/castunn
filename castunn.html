@@ -129,7 +129,13 @@
 	<div id="settingsModal" class="settings-modal" aria-hidden="true" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
 	  <div class="settings-card">
 		<h2 id="settingsTitle">Paramètres</h2>
+		<div class="settings-onglets" role="tablist">
+		  <button type="button" role="tab" class="settings-onglet" id="ongletConnexion" aria-controls="panneauConnexion" aria-selected="true">Connexion</button>
+		  <button type="button" role="tab" class="settings-onglet" id="ongletOptimisations" aria-controls="panneauOptimisations" aria-selected="false">Optimisations</button>
+		</div>
 		<form id="settingsForm">
+		 <div class="settings-corps">
+		  <div id="panneauConnexion" role="tabpanel" aria-labelledby="ongletConnexion">
 		  <div class="settings-row">
 			<label for="serverIp" class="settings-label">IP/URL du serveur de signalisation</label>
 			<input id="serverIp" name="serverIp" class="settings-input" type="text" placeholder="ex. wss://signal.example.org" autocomplete="off" />
@@ -162,9 +168,11 @@
 			Démarre un serveur Castunn en arrière-plan sur le port 8080. Laissez le champ IP vide pour s'y connecter automatiquement.
 		  </p>
 		  </div>
+		  </div>
+		  <div id="panneauOptimisations" role="tabpanel" aria-labelledby="ongletOptimisations" hidden>
 		  <div class="settings-row" id="portForwardingRow" style="display:none">
-			<label class="settings-label" for="chkPortForwarding">Ports du routeur</label>
-			<label class="row" style="gap:8px;align-items:center;cursor:pointer">
+			<span class="settings-label">Ports du routeur</span>
+			<label class="settings-case">
 			  <input type="checkbox" id="chkPortForwarding" />
 			  <span id="portForwardingLabel">Ouvrir automatiquement les ports UDP de Castunn (UPnP / NAT-PMP)</span>
 			</label>
@@ -183,7 +191,9 @@
 			  Chaque destinataire coûte un encodage vidéo : la limite soulage l'ordinateur sur un grand écran, à plusieurs. S'applique au prochain partage.
 			</p>
 		  </div>
-		  <span id="appVersion">Castunn</span>
+		  <p class="settings-version"><span id="appVersion">Castunn</span></p>
+		  </div>
+		 </div>
 		  <div class="settings-actions">
 			<button type="button" class="btn" id="settingsCancel">Annuler</button>
 			<button type="submit" class="btn primary">Enregistrer</button>
@@ -1654,14 +1664,22 @@ function showLocalImage(url){
       // La poussée de l'essaim : chaque morceau parti une fois. Le stop
       // l'interrompt (abortUpload), l'annulation prévient les membres.
       let essaimOk = true;
+      let personne = false;
       if (envoi.essaimT) {
         const t = envoi.essaimT;
-        while (!abortUpload && t.frontiere < t.n && !t.annule && essaim.transfert(t.num)) {
-          await Promise.race([t.termine, new Promise((r) => setTimeout(r, 200))]);
+        // La poussée peut finir tôt (plus aucun membre). Attendre sa promesse
+        // déjà résolue dans une boucle ne rendait jamais la main : des
+        // millions de minuteries, 8 Go de mémoire, page morte (constaté sur
+        // un récepteur désactivé). On note la fin, et on vérifie toutes les
+        // 200 ms en laissant vraiment tourner la page.
+        let poussee = false;
+        t.termine.then(() => { poussee = true; }, () => { poussee = true; });
+        while (!abortUpload && !poussee && !t.annule && essaim.transfert(t.num)) {
+          await new Promise((r) => setTimeout(r, 200));
         }
         // Plus aucun membre (tous partis, ou récepteurs désactivés qui ont
         // refusé) : rien d'annulé, simplement personne à servir.
-        const personne = !t.membres.size;
+        personne = !t.membres.size;
         essaimOk = !abortUpload && (t.frontiere >= t.n || personne);
         if (!essaimOk || personne) essaim.annuler(t.num);
       }
@@ -1669,10 +1687,12 @@ function showLocalImage(url){
       // NE FINALISE QUE SI TOUT A ÉTÉ ENVOYÉ
       const morceauxOk = !parMorceaux || (!abortUpload && offset === file.size);
       if (parMorceaux) terminerEnvoi(morceauxOk ? 'binary-end' : 'binary-cancel');
-      if (morceauxOk && essaimOk) {
+      if (personne && !parMorceaux && !abortUpload) {
+        addConsole(`Envoi de ${file.name} : aucun récepteur ne l’a accepté (récepteurs désactivés, ou partis).`);
+      } else if (morceauxOk && essaimOk) {
         const dt = (Date.now() - t0) / 1000;
         addConsole(`Envoi terminé (${file.name}) en ${dt.toFixed(1)}s`
-          + (envoi.essaimT ? ' — les récepteurs de l’essaim finissent entre eux' : ''));
+          + (envoi.essaimT && !personne ? ' — les récepteurs de l’essaim finissent entre eux' : ''));
       } else {
         addConsole(`Envoi annulé (${file.name})`);
       }
@@ -1766,8 +1786,12 @@ function showLocalImage(url){
   }
 
   function stopAll(){
-    // Le récepteur se désactive : toutes les vignettes s'arrêtent.
+    // Le récepteur se désactive : toutes les vignettes s'arrêtent, et leurs
+    // fichiers quittent la mémoire.
     tuiles.arreterTout();
+    for (const de of new Set([...recepteurs.keys()].map((cle) => cle.split('|')[0]).concat([...fluxParSource.keys()]))) {
+      libererSource(de);
+    }
   }
 
   function downloadUrl(url, filename = 'fichier') {
@@ -1800,10 +1824,29 @@ function showLocalImage(url){
     erreur: (text) => { recvError.textContent = text; }
   });
 
+  /**
+   * Ce qu'un émetteur nous montrait n'est plus affiché : ses fichiers quittent
+   * la mémoire (flux lu pendant le téléchargement, fichier reçu d'un bloc).
+   * Un film de 3 Go restait sinon en mémoire jusqu'au média suivant, même
+   * après un stop (constaté : 1,3 Go maintenus).
+   */
+  function libererSource(de) {
+    libererFlux(de);
+    for (const r of recepteursDe(de)) r.liberer();
+  }
+  function libererFlux(de) {
+    const num = fluxParSource.get(de);
+    if (num === undefined) return;
+    fluxParSource.delete(de);
+    lecture.fermer(num);
+  }
+
   function makeMediaReceiver(de, via) {
     return createMediaReceiver({
       label: via,
       render: (url, target, info) => {
+        // La vignette passe à ce média : l'ancien flux de cet émetteur n'est plus montré.
+        libererFlux(de);
         if (target === 'video') tuiles.afficherVideo(de, url, { mime: info.mime, nom: info.filename });
         else if (target === 'audio') tuiles.afficherAudio(de, url);
         else tuiles.afficherImage(de, url);
@@ -1913,6 +1956,7 @@ function showLocalImage(url){
       for (const r of recepteursDe(qui)) r.discard();
       essaim.oublierSource(qui);
       tuiles.arreter(qui);
+      libererSource(qui);
       ctrlError.textContent = '';
       recvError.textContent = '';
       sendConfirmation(`${getDisplayName()} — Stop reçu (${via})`, de);
@@ -1920,6 +1964,7 @@ function showLocalImage(url){
     }
 
     if ((msg.type === 'audio' || msg.type === 'video' || msg.type === 'image') && msg.url) {
+      libererFlux(qui);   // l'ancienne vidéo lue pendant son téléchargement n'est plus montrée
       if (msg.type === 'audio') tuiles.afficherAudio(qui, msg.url);
       else if (msg.type === 'video') tuiles.afficherVideo(qui, msg.url);
       else tuiles.afficherImage(qui, msg.url);
@@ -1949,8 +1994,29 @@ function showLocalImage(url){
 		nick.value = window.__nickname || '';
 		salleCode.value = codeSalle ? formaterCode(codeSalle) : '';
 		salleErreur.textContent = '';
+		montrerOnglet(onglets[0]);
 		setTimeout(()=>ip && ip.focus(), 20);
 	  }
+
+	  // Onglets des Paramètres : Connexion, Optimisations.
+	  const onglets = [...document.querySelectorAll('#settingsModal [role="tab"]')];
+	  function montrerOnglet(onglet) {
+		for (const o of onglets) {
+		  const actif = o === onglet;
+		  o.setAttribute('aria-selected', String(actif));
+		  o.tabIndex = actif ? 0 : -1;
+		  document.getElementById(o.getAttribute('aria-controls')).hidden = !actif;
+		}
+	  }
+	  onglets.forEach((o, i) => {
+		o.addEventListener('click', () => montrerOnglet(o));
+		o.addEventListener('keydown', (e) => {
+		  if (e.key !== 'ArrowRight' && e.key !== 'ArrowLeft') return;
+		  const suivant = onglets[(i + (e.key === 'ArrowRight' ? 1 : -1) + onglets.length) % onglets.length];
+		  montrerOnglet(suivant);
+		  suivant.focus();
+		});
+	  });
 
 	  const salleCode = document.getElementById('salleCode');
 	  const salleErreur = document.getElementById('salleErreur');
@@ -1977,6 +2043,8 @@ function showLocalImage(url){
       const code = saisie ? normaliserCode(saisie) : '';
       if (code === null) {
         salleErreur.textContent = 'Code invalide : 20 lettres et chiffres (sans 0, 1, l ni o), tirets facultatifs.';
+        montrerOnglet(onglets[0]);
+        salleCode.focus();
         return;
       }
       const salleChangee = code !== codeSalle;
@@ -2236,6 +2304,8 @@ function showLocalImage(url){
   const lecture = createFluxLecture({ essaim });
   let adresseFlux = null;           // (num) => adresse, ou null sans transport
   const fluxParSource = new Map();  // émetteur -> numéro du flux qu'il nous montre
+  // Flux encore gardés en mémoire : diagnostic et tests.
+  window.__castunnFluxOuverts = () => lecture.nombre();
 
   /** Les deux questions des transports : « ouvrir » (en-têtes) et « octets ». */
   async function repondreFlux(q) {

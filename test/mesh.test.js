@@ -323,6 +323,25 @@ app.whenReady().then(async () => {
     if (await js(s1, 'document.getElementById("localClose").hidden')) throw new Error('« Fermer » toujours masqué après Stop');
   });
 
+  await check('fichier vers un récepteur désactivé : l’émetteur le sait, et sa page reste vivante', async () => {
+    // Constaté : la page émettrice tournait en boucle sans rendre la main
+    // (8 Go de mémoire, puis page blanche).
+    await js(s1, `(() => {
+      const dt = new DataTransfer(); dt.items.add(new File([new Uint8Array(2 * 1024 * 1024)], 'refuse.mkv', { type: 'video/x-matroska' }));
+      document.getElementById('mediaFile').files = dt.files;
+      document.getElementById('btnSendMediaFile').click(); return true; })()`);
+    await waitUntil(async () => /refuse\.mkv : aucun récepteur ne l’a accepté/.test(await consoleDe(s1)),
+      { label: 'émetteur informé que personne n’a accepté' });
+    if (!/a reçu video \(essaim\) mais Récepteur désactivé \(non lu\)/.test(await consoleDe(s1))) {
+      throw new Error('l’accusé « non lu » du récepteur n’est pas arrivé chez l’émetteur');
+    }
+    await sleep(1500);
+    const t0 = Date.now();
+    await js(s1, '1');
+    if (Date.now() - t0 > 1000) throw new Error(`page émettrice figée (${Date.now() - t0} ms pour répondre)`);
+    if (await js(s1, 'document.getElementById("btnSendMediaFile").disabled')) throw new Error('bouton d’envoi resté bloqué');
+  });
+
   await check('le direct s’arrête chez le récepteur dès que la capture cesse, même sans Stop', async () => {
     await js(s2, 'document.getElementById("btnActivate").click(); true');
     // Qualité « Natif » choisie dans les Paramètres : aucune limite demandée.

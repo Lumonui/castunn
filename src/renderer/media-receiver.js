@@ -123,6 +123,16 @@ export function createMediaReceiver(deps = {}) {
       return { url, target, mime: effMime, filename: name };
     },
 
+    /**
+     * Le média affiché n'est plus montré (stop, récepteur désactivé) : son
+     * fichier est libéré. Sans ça, un film de plusieurs Go restait en mémoire
+     * jusqu'au média suivant.
+     */
+    liberer() {
+      if (lastUrl) revokeUrl(lastUrl);
+      lastUrl = null;
+    },
+
     /** Pour les tests et le diagnostic. */
     get state() {
       return { chunks: chunks.length, mime, kind, filename, dropping };

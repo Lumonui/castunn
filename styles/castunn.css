@@ -463,6 +463,12 @@ strong {
 
 .settings-card {
   width: min(540px, 93vw);
+  /* Petite fenêtre : la carte tient dans l'écran, son contenu défile, les
+     boutons restent visibles en bas. */
+  max-height: calc(100vh - 32px);
+  display: flex;
+  flex-direction: column;
+  box-sizing: border-box;
   padding: 24px 22px 20px;
   border-radius: var(--radius-lg);
   border: 1px solid rgba(137,180,250,.15);
@@ -486,6 +492,62 @@ strong {
   color: var(--accent);
   letter-spacing: .03em;
 }
+
+.settings-card form {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.settings-corps {
+  overflow-y: auto;
+  min-height: 0;
+  padding-right: 6px;
+}
+
+.settings-onglets {
+  display: flex;
+  gap: 4px;
+  border-bottom: 1px solid rgba(137,180,250,.12);
+  margin-bottom: 4px;
+}
+.settings-onglet,
+.settings-onglet:hover,
+.settings-onglet:active {
+  padding: 8px 14px;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: none;
+  box-shadow: none;
+  transform: none;
+  color: var(--fg-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.settings-onglet:hover { color: var(--fg); }
+.settings-onglet[aria-selected="true"] {
+  color: var(--accent);
+  border-bottom-color: var(--accent);
+}
+.settings-onglet:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+
+/* Une case et son texte, sur une ligne : la règle générale des <label>
+   (majuscules, bloc, marges) ne s'y applique pas. */
+.settings-case {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin: 0;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 400;
+  letter-spacing: normal;
+  text-transform: none;
+  color: var(--fg);
+}
+.settings-version { font-size: 12px; color: var(--fg-muted); margin: 14px 0 0; }
 
 .settings-row { display: grid; gap: 6px; margin: 14px 0; }
 

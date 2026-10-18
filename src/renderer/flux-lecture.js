@@ -36,6 +36,8 @@ export function createFluxLecture({ essaim, fenetre = FENETRE } = {}) {
 
     fermer(num) { flux.delete(num); },
     ouvert: (num) => flux.has(num),
+    /** Flux encore servis (et leurs fichiers gardés en mémoire) : diagnostic et tests. */
+    nombre: () => flux.size,
 
     /** Ce que le transport met dans les en-têtes, ou null si inconnu. */
     info(num) {

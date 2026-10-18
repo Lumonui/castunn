@@ -40,6 +40,24 @@ test('la page annonce la version de package.json (le serveur refuse toute autre)
   ok(/^\d\d-\d\d-\d{4}$/.test(DATE_VERSION), 'date : ' + DATE_VERSION);
 });
 
+/* ------------------------- libération des médias ------------------------ */
+
+test('un média qui n’est plus montré libère son fichier', () => {
+  const revoquees = [];
+  const r = createMediaReceiver({
+    render: () => {}, download: () => {},
+    createUrl: () => 'blob:film', revokeUrl: (u) => revoquees.push(u)
+  });
+  r.begin({ mime: 'video/mp4', kind: 'video', filename: 'film.mp4' });
+  r.push(new Uint8Array([1, 2, 3]));
+  r.end();
+  eq(revoquees, [], 'gardé tant qu’il est affiché');
+  r.liberer();
+  eq(revoquees, ['blob:film'], 'libéré au stop');
+  r.liberer();
+  eq(revoquees, ['blob:film'], 'une seule fois');
+});
+
 /* -------------------------------- salles -------------------------------- */
 
 test('un code de salle : 20 caractères lisibles, en groupes, jamais deux fois le même', () => {

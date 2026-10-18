@@ -30,6 +30,12 @@ const ENTETE = 10;
 export const RELAYER = 1;   // poussé par la source : à relayer aux autres membres
 export const SIMPLE = 2;    // relais ou réponse à une demande : à garder pour soi
 
+// Le récepteur assemble par blocs de 256 morceaux (16 Mio) : un bloc complet
+// devient un Blob, que Chromium range sur disque si besoin, et ses morceaux
+// quittent la mémoire vive. Sans ça, un film de 3 Go occupait 3 Go de RAM,
+// puis le double un instant à l'assemblage final (constaté).
+export const BLOC = 256;
+
 // Canal plein au-delà d'1 Mio en attente : on cesse d'y ajouter.
 const TAMPON_HAUT = 1024 * 1024;
 // File de relais par voisin : au-delà, on ne relaie plus (il demandera).
@@ -182,6 +188,11 @@ export function createEssaim(deps = {}) {
 
   async function donneesPiece(t, index) {
     if (t.pieces?.[index]) return t.pieces[index];
+    const bloc = t.blocs?.[Math.floor(index / BLOC)];
+    if (bloc) {
+      const debut = (index % BLOC) * t.taillePiece;
+      return bloc.slice(debut, debut + t.taillePiece).arrayBuffer();
+    }
     const source = t.fichier || t.blob;
     if (!source) return null;
     const debut = index * t.taillePiece;
@@ -328,6 +339,7 @@ export function createEssaim(deps = {}) {
       membres: new Set(Array.isArray(m.membres) ? m.membres : []),
       possedeDe: new Map(), complets: new Set(),
       pieces: new Array(m.n | 0), possede: new Uint8Array(m.n | 0), nbRecus: 0,
+      blocs: new Array(Math.ceil((m.n | 0) / BLOC)), parBloc: new Uint16Array(Math.ceil((m.n | 0) / BLOC)),
       frontiere: Number(m.frontiere) || 0, demandes: new Map(),
       annule: false, complet: false, publie: -1,
       // Vérification des morceaux : empreintes données par la source, morceaux
@@ -365,6 +377,8 @@ export function createEssaim(deps = {}) {
         enfiler(id, { type: SIMPLE, num: t.num, index }, { max: FILE_RELAIS_MAX });
       }
     }
+    // Après les relais et les lecteurs, qui ont déjà leurs données en main.
+    rangerBloc(t, index);
     if (t.nbRecus % 16 === 0) surProgres(t);
     if (t.nbRecus === t.n) terminer(t);
   }
@@ -423,8 +437,7 @@ export function createEssaim(deps = {}) {
   function lirePiece(num, index) {
     const t = transferts.get(num);
     if (!t || index < 0 || index >= t.n) return Promise.resolve(null);
-    if (t.complet || t.role === 'source') return donneesPiece(t, index);
-    if (t.possede[index]) return Promise.resolve(t.pieces[index]);
+    if (t.complet || t.role === 'source' || t.possede[index]) return donneesPiece(t, index);
     return new Promise((ok, ko) => {
       if (!lecteurs.has(num)) lecteurs.set(num, new Map());
       const parIndex = lecteurs.get(num);
@@ -433,10 +446,23 @@ export function createEssaim(deps = {}) {
     });
   }
 
+  /** Bloc de morceaux complet : un Blob, et ses morceaux quittent la mémoire vive. */
+  function rangerBloc(t, index) {
+    const k = Math.floor(index / BLOC);
+    const debut = k * BLOC;
+    const fin = Math.min(t.n, debut + BLOC);
+    t.parBloc[k]++;
+    if (t.parBloc[k] < fin - debut) return;
+    t.blocs[k] = new Blob(t.pieces.slice(debut, fin));
+    for (let i = debut; i < fin; i++) t.pieces[i] = undefined;
+  }
+
   function terminer(t) {
     t.complet = true;
-    t.blob = new Blob(t.pieces, { type: t.mime || 'application/octet-stream' });
+    // Fait de blocs déjà rangés : aucune copie, aucun pic de mémoire.
+    t.blob = new Blob(t.blocs, { type: t.mime || 'application/octet-stream' });
     t.pieces = null;               // on sert désormais depuis le blob
+    t.blocs = null;
     publier(t, { force: true });
     surProgres(t);
     surComplet(t, t.blob);

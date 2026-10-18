@@ -163,6 +163,16 @@ app.whenReady().then(async () => {
       return v.currentTime; })()`);
     if (Math.abs(t - 2) > 0.2) throw new Error('position : ' + t);
   });
+  await check('application : après un stop, le fichier reçu quitte la mémoire', async () => {
+    if ((await js(b, 'window.__castunnFluxOuverts()')) !== 1) throw new Error('le flux devait être ouvert avant le stop');
+    await js(a, 'document.getElementById("btnStop").click(); true');
+    await waitUntil(async () => !(await js(b, `!!document.querySelector('#receptions .tuile[data-de="${a.id}"]')`)),
+      { label: 'vignette retirée' });
+    // Constaté : 1,3 Go restaient occupés après un stop. Le flux est fermé,
+    // son fichier n'est plus retenu.
+    const restants = await js(b, 'window.__castunnFluxOuverts()');
+    if (restants !== 0) throw new Error(`${restants} flux toujours gardé(s) en mémoire après le stop`);
+  });
   for (const p of pages.splice(0)) p.win.destroy();
 
   const c = await ouvrir('cleo', { navigateur: true });

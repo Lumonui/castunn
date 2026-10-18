@@ -37,6 +37,7 @@ function reseau({ debit = 256 * 1024, latence = 1 } = {}) {
     const n = { id, recus: [], complets: [], abandons: [], annonces: [], journal: [] };
     n.essaim = createEssaim({
       ...(opts.hacher ? { hacher: opts.hacher } : {}),
+      ...(opts.taillePiece ? { taillePiece: opts.taillePiece } : {}),
       log: (texte) => n.journal.push(texte),
       moi: () => id,
       ouvert: (vers) => !!canaux.get(cle(id, vers))?.ouvert,
@@ -279,6 +280,36 @@ test('« stop » de l’émetteur : le récepteur oublie son transfert', async (
   eq(n.b.essaim.transferts().length, 0);
   eq(n.b.abandons, ['stop']);
   n.a.essaim.annuler(t.num);
+});
+
+/* ----------------------- mémoire du récepteur ---------------------------- */
+
+test('gros fichier : le récepteur range par blocs, sans tout garder en mémoire vive', async () => {
+  // Morceaux d'1 Kio pour aller vite : 700 morceaux, soit 3 blocs (256 + 256 + 188).
+  const r = reseau();
+  const a = r.noeud('a', { taillePiece: 1024 }), b = r.noeud('b', { taillePiece: 1024 });
+  r.relier('a', 'b');
+  const f = fichier(700 * 1024 - 300);
+  const t = a.essaim.partager(f, meta, ['b']);
+  let maxEnMemoire = 0;
+  const sonde = setInterval(() => {
+    const tb = b.essaim.transfert(t.num);
+    if (tb?.pieces) maxEnMemoire = Math.max(maxEnMemoire, tb.pieces.filter(Boolean).length);
+  }, 2);
+  // Un saut loin devant pendant le transfert (lecture d'une vidéo) : le
+  // dernier bloc se complète dans le désordre.
+  await attendre(() => b.essaim.transfert(t.num), 3000, 'annonce');
+  const lecture = createFluxLecture({ essaim: b.essaim });
+  lecture.ouvrir(t.num, { taille: f.size, mime: 'video/mp4', taillePiece: 1024 });
+  const loin = await lecture.octets(t.num, 650 * 1024);
+  eq([...new Uint8Array(loin)], [...new Uint8Array(await f.slice(650 * 1024, 651 * 1024).arrayBuffer())], 'saut loin devant');
+  await attendre(() => b.complets.length, 10000, 'complet');
+  clearInterval(sonde);
+  ok(await memesOctets(b.complets[0].blob, f), 'octets exacts');
+  ok(maxEnMemoire <= 256 + 32, `au plus ~1 bloc en mémoire vive (vu : ${maxEnMemoire} morceaux sur 700)`);
+  // Un morceau rangé dans un bloc se relit toujours (relais, lecteur).
+  const relu = await b.essaim.lirePiece(t.num, 10);
+  ok(relu === null || relu.byteLength === 1024, 'relecture depuis un bloc');
 });
 
 /* --------------------------- empreintes ---------------------------------- */
