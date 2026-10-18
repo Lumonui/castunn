@@ -288,7 +288,10 @@ function spawnServer() {
       // version de l'application qui le lance.
       const env = {
         ...process.env, PORT: '8080', NODE_PATH: nodeModulesPath,
-        CASTUNN_VERSION: require('./package.json').version
+        CASTUNN_VERSION: require('./package.json').version,
+        // Réseau de confiance : la salle commune « default » y est permise
+        // (un serveur public n'accepte que des salles privées).
+        CASTUNN_SALLE_LIBRE: '1'
       };
       delete env.TURN_URLS;
       delete env.TURN_SECRET;

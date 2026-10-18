@@ -31,9 +31,13 @@ function reseau({ debit = 256 * 1024, latence = 1 } = {}) {
   const canaux = new Map();    // "a>b" -> { tampon, libreA, ouvert }
   const cle = (a, b) => `${a}>${b}`;
 
+  const falsificateurs = new Set();
+
   function noeud(id, opts = {}) {
-    const n = { id, recus: [], complets: [], abandons: [], annonces: [] };
+    const n = { id, recus: [], complets: [], abandons: [], annonces: [], journal: [] };
     n.essaim = createEssaim({
+      ...(opts.hacher ? { hacher: opts.hacher } : {}),
+      log: (texte) => n.journal.push(texte),
       moi: () => id,
       ouvert: (vers) => !!canaux.get(cle(id, vers))?.ouvert,
       tampon: (vers) => canaux.get(cle(id, vers))?.tampon ?? Infinity,
@@ -72,6 +76,12 @@ function reseau({ debit = 256 * 1024, latence = 1 } = {}) {
   function envoyer(de, vers, donnees) {
     const c = canaux.get(cle(de, vers));
     if (!c?.ouvert) return false;
+    // Un pair malveillant : chaque morceau qu'il envoie a un octet changé.
+    if (falsificateurs.has(de) && typeof donnees !== 'string' && donnees.byteLength > 10) {
+      const copie = new Uint8Array(donnees.slice(0));
+      copie[10] ^= 0xff;
+      donnees = copie.buffer;
+    }
     const taille = typeof donnees === 'string' ? donnees.length : donnees.byteLength;
     c.tampon += taille;
     const depart = Math.max(performance.now(), c.libre);
@@ -87,7 +97,7 @@ function reseau({ debit = 256 * 1024, latence = 1 } = {}) {
     return true;
   }
 
-  return { noeud, relier, couper, partir, noeuds };
+  return { noeud, relier, couper, partir, noeuds, falsifier: (id) => falsificateurs.add(id) };
 }
 
 function relierTous(r, ids) {
@@ -269,6 +279,62 @@ test('« stop » de l’émetteur : le récepteur oublie son transfert', async (
   eq(n.b.essaim.transferts().length, 0);
   eq(n.b.abandons, ['stop']);
   n.a.essaim.annuler(t.num);
+});
+
+/* --------------------------- empreintes ---------------------------------- */
+
+test('un membre qui relaie des morceaux faux est démasqué : les autres ont le bon fichier', async () => {
+  const r = reseau();
+  const ids = ['a', 'b', 'c', 'd'];
+  const n = Object.fromEntries(ids.map((id) => [id, r.noeud(id)]));
+  relierTous(r, ids);
+  // b falsifie tout ce qu'il envoie (un octet changé dans chaque morceau).
+  r.falsifier('b');
+  const f = fichier(48 * TAILLE_PIECE);
+  const t = n.a.essaim.partager(f, meta, ['b', 'c', 'd']);
+  await attendre(() => n.c.complets.length && n.d.complets.length, 15000, 'c et d complets');
+  for (const id of ['c', 'd']) ok(await memesOctets(n[id].complets[0].blob, f), `octets exacts chez ${id}`);
+  ok(n.c.essaim.stats.corrompus + n.d.essaim.stats.corrompus > 0, 'des morceaux faux ont bien été écartés');
+  ok(n.c.journal.some((l) => l.includes('faux, reçu de b')), 'et c’est dit : ' + n.c.journal.join(' | '));
+  n.a.essaim.annuler(t.num);
+});
+
+test('sans calcul d’empreintes (page en http), le transfert marche, sans vérification', async () => {
+  const r = reseau();
+  const a = r.noeud('a', { hacher: async () => null });
+  const b = r.noeud('b', { hacher: async () => null });
+  r.relier('a', 'b');
+  const f = fichier(12 * TAILLE_PIECE);
+  const t = a.essaim.partager(f, meta, ['b']);
+  await attendre(() => b.complets.length, 5000, 'complet');
+  ok(await memesOctets(b.complets[0].blob, f), 'octets');
+  eq(t.verifie, false, 'annoncé sans empreintes');
+});
+
+test('un morceau arrivé avant son empreinte attend, puis est vérifié', async () => {
+  const r = reseau();
+  const a = r.noeud('a'), b = r.noeud('b');
+  r.relier('a', 'b');
+  const f = fichier(4 * TAILLE_PIECE);
+  const t = a.essaim.partager(f, meta, []);       // aucun membre : rien n'est poussé
+  await t.termine;
+  await pause(20);   // b vient d'être créé : le temps de savoir qu'il calcule des empreintes
+  // On simule un relais plus rapide que la source : b reçoit l'annonce, puis
+  // un morceau (vrai) d'un tiers avant toute empreinte.
+  b.essaim.recevoir('a', JSON.stringify({ t: 'annonce', num: t.num, nom: 'x', taille: f.size, mime: '', kind: 'file',
+    n: 4, piece: TAILLE_PIECE, membres: ['b', 'z'], frontiere: 0, empreintes: true }));
+  const piece0 = await f.slice(0, TAILLE_PIECE).arrayBuffer();
+  b.essaim.recevoir('z', encoderPiece(SIMPLE, t.num, 0, piece0));
+  await pause(30);
+  eq(b.essaim.transfert(t.num).nbRecus, 0, 'pas gardé sans empreinte');
+  const { createHash } = await import('node:crypto');
+  const h = createHash('sha256').update(Buffer.from(piece0)).digest('base64');
+  b.essaim.recevoir('a', JSON.stringify({ t: 'empreintes', num: t.num, debut: 0, h: [h] }));
+  await attendre(() => b.essaim.transfert(t.num)?.nbRecus === 1, 2000, 'gardé une fois l’empreinte reçue');
+  // Une empreinte qui ne vient pas de la source est ignorée.
+  b.essaim.recevoir('z', JSON.stringify({ t: 'empreintes', num: t.num, debut: 1, h: ['faux'] }));
+  eq(b.essaim.transfert(t.num).empreintes[1], undefined, 'seule la source fait foi');
+  b.essaim.toutOublier();
 });
 
 /* --------------------- lecture pendant le téléchargement ----------------- */

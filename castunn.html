@@ -141,6 +141,17 @@
 			<label for="nickname" class="settings-label">Pseudo</label>
 			<input id="nickname" name="nickname" class="settings-input" type="text" placeholder="Votre pseudo" autocomplete="nickname" />
 		  </div>
+		  <div class="settings-row">
+			<label for="salleCode" class="settings-label">Salle privée</label>
+			<div class="row" style="gap:8px;align-items:center">
+			  <input id="salleCode" class="settings-input" type="text" placeholder="ex. abcd-efgh-ijkm-npqr-stuv" autocomplete="off" spellcheck="false" style="flex:1" />
+			  <button type="button" class="btn" id="btnNouvelleSalle">Nouvelle salle</button>
+			</div>
+			<span id="salleErreur" style="font-size:12px;color:var(--error)"></span>
+			<p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			  Donnez ce code aux participants : seuls ceux qui l'ont vous rejoignent. Vide : salle commune du serveur local (réseau de confiance) ; un serveur public l'exige.
+			</p>
+		  </div>
 		  <div class="settings-row" id="localServerRow" style="display:none">
 		  <label class="settings-label">Serveur de signalisation local (LAN)</label>
 		  <div class="row" style="gap:10px;align-items:center">
@@ -199,6 +210,7 @@
   import { createReceptionTiles } from './src/renderer/reception-tiles.js';
   import { createEssaim } from './src/renderer/essaim.js';
   import { VERSION, DATE_VERSION } from './src/renderer/version.js';
+  import { nouveauCode, normaliserCode, formaterCode, identifiantSalle } from './src/renderer/salle.js';
 
   /* === Etat global === */
   let socket;
@@ -449,7 +461,40 @@
       ? `[TURN] disponible (${urls})`
       : `[TURN] annoncé mais injoignable : ${turnFailureReason(erreurs)}`);
   }
-  const room = 'default';    // simple room (tu peux la rendre paramétrable)
+  /* --- Salle (src/renderer/salle.js) -------------------------------------
+   * Sans code : la salle commune « default », que seul le serveur local (réseau
+   * de confiance) accepte. Avec un code : une salle privée ; le serveur n'en
+   * reçoit que l'empreinte. Code mémorisé sur ce poste ; un lien
+   * « …#salle=<code> » le préremplit.
+   * -------------------------------------------------------------------- */
+  const SALLE_CLE = 'castunn.salle';
+  let codeSalle = (() => {
+    const duLien = normaliserCode(new URLSearchParams(location.hash.slice(1)).get('salle'));
+    if (duLien) { try { localStorage.setItem(SALLE_CLE, duLien); } catch {} return duLien; }
+    try { return normaliserCode(localStorage.getItem(SALLE_CLE)) || ''; } catch { return ''; }
+  })();
+
+  // Un lien de salle ouvert dans une page déjà chargée ne la recharge pas (le
+  // navigateur ne change que le « # ») : on l'adopte et on change de salle.
+  window.addEventListener('hashchange', () => {
+    const code = normaliserCode(new URLSearchParams(location.hash.slice(1)).get('salle'));
+    if (!code || code === codeSalle) return;
+    codeSalle = code;
+    try { localStorage.setItem(SALLE_CLE, code); } catch {}
+    addConsole('[WS] lien de salle ouvert : changement de salle.');
+    connectFromModal({ forcer: true });
+  });
+
+  /** Identifiant de salle à envoyer au serveur, ou null si impossible (erreur affichée). */
+  async function salleAJoindre() {
+    if (!codeSalle) return 'default';
+    try {
+      return await identifiantSalle(codeSalle);
+    } catch (e) {
+      bloquer(`Salle privée impossible ici (${e.message}) : ouvrez Castunn en https, ou dans l’application.`, 'Salle impossible');
+      return null;
+    }
+  }
 
 
   /* --- Pastille RTC du maillage (src/renderer/mesh-status.js) -------------
@@ -593,7 +638,7 @@
 
     // Le réessai automatique a pu aboutir pendant le balayage ci-dessus : s'il
     // nous a déjà mis sur ce serveur, rien à refaire.
-    if (socket && socket.readyState === WebSocket.OPEN && window.__castunnSignalUrl === url) {
+    if (!opts?.forcer && socket && socket.readyState === WebSocket.OPEN && window.__castunnSignalUrl === url) {
       addConsole(`[WS] déjà connecté à ${url}`);
       return;
     }
@@ -893,24 +938,51 @@ function showLocalImage(url){
    * automatique ensuite : seule une reconnexion demandée (Paramètres,
    * démarrage du serveur local) relance.
    * --------------------------------------------------------------------- */
-  let versionBloquee = null;
+  let versionBloquee = null;   // texte de l'erreur fatale en cours (version, salle)
+  let delaiImpose = null;      // refus temporaire du serveur : délai avant le prochain essai (ms)
   const bandeauFatal = document.getElementById('bandeauFatal');
+
+  function afficherBandeau(texte) {
+    bandeauFatal.textContent = texte;
+    bandeauFatal.setAttribute('role', 'alert');
+    bandeauFatal.hidden = false;
+    ctrlError.textContent = texte;
+    addConsole(`[WS] ${texte}`);
+  }
+
+  /** Erreur fatale : plus d'essai automatique, le même serveur refuserait encore. */
+  function bloquer(texte, statut) {
+    versionBloquee = texte;
+    cancelReconnect();
+    afficherBandeau(texte);
+    setWsStatus(statut);
+    try { socket?.close(1000, 'refus'); } catch {}
+  }
 
   function refuserVersion(versionServeur) {
     const serveur = typeof versionServeur === 'string' && versionServeur ? `v${versionServeur}` : 'une version trop ancienne pour l’annoncer';
     const ou = (window.__castunnSignalUrl || '').replace(/^wss?:\/\//, '');
-    const texte = `Version incompatible : cette application est en v${VERSION}, le serveur${ou ? ` (${ou})` : ''} en ${serveur}.`
+    bloquer(`Version incompatible : cette application est en v${VERSION}, le serveur${ou ? ` (${ou})` : ''} en ${serveur}.`
       + ' Tous les participants et le serveur doivent avoir exactement la même version de Castunn :'
-      + ' mettez à jour celui qui est en retard, puis reconnectez-vous.';
-    versionBloquee = texte;
-    cancelReconnect();
-    bandeauFatal.textContent = texte;
-    bandeauFatal.setAttribute('role', 'alert');
-    bandeauFatal.hidden = false;
-    setWsStatus('Version incompatible');
-    ctrlError.textContent = texte;
-    addConsole(`[WS] ${texte}`);
-    try { socket?.close(1000, 'version'); } catch {}
+      + ' mettez à jour celui qui est en retard, puis reconnectez-vous.', 'Version incompatible');
+  }
+
+  /** Le serveur n'accepte que les salles privées (serveur public). */
+  function refuserSalle() {
+    bloquer('Ce serveur n’accepte que les salles privées : dans les Paramètres, créez une salle'
+      + ' (« Nouvelle salle ») ou saisissez le code qu’on vous a donné, puis enregistrez.', 'Salle requise');
+  }
+
+  /**
+   * Refus temporaire (serveur plein, trop de connexions depuis cette adresse) :
+   * on le dit, et on réessaie seulement après le délai que le serveur indique —
+   * réessayer toutes les 3 s prolongerait le blocage.
+   */
+  function refusTemporaire(msg) {
+    const secondes = Math.max(5, Number(msg.reessayerDans) || 30);
+    delaiImpose = secondes * 1000;
+    afficherBandeau(`${String(msg.message || 'Connexion refusée par le serveur.')} Nouvel essai automatique dans ${secondes} s.`);
+    setWsStatus('Refusé');
   }
 
   function leverRefusVersion() {
@@ -959,10 +1031,11 @@ function showLocalImage(url){
       // Le serveur ne voit que l'adresse du proxy quand il est hébergé
       // derrière un reverse proxy : on lui annonce notre IP dès le join.
       const ip = await waitForPublicIp();
-      if (wsGen !== myGen || thisSocket.readyState !== WebSocket.OPEN) return;
+      const salle = await salleAJoindre();
+      if (!salle || wsGen !== myGen || thisSocket.readyState !== WebSocket.OPEN) return;
       thisSocket.send(JSON.stringify({
         type: 'join',
-        room,
+        room: salle,
         ip: ip || '',
         nick: (window.__nickname || '').trim(),
         // Le serveur refuse toute autre version que la sienne.
@@ -972,7 +1045,7 @@ function showLocalImage(url){
         capacites: ['binaire-signe']
       }));
       setWsStatus('Connecté');
-      addConsole(`[WS] join envoyé (ip=${ip || 'inconnue'}), les autres vous verront sous ce nom.`);
+      addConsole(`[WS] join envoyé (ip=${ip || 'inconnue'}, ${codeSalle ? 'salle privée' : 'salle commune'}), les autres vous verront sous ce nom.`);
 	  setTimeout(sendAnnounce, 500);
     };
 
@@ -987,8 +1060,14 @@ function showLocalImage(url){
       // Version refusée : le même serveur refuserait encore. Pas de nouvel
       // essai automatique ; seule une action de l'utilisateur relance.
       if (versionBloquee) { resetPeerState(); return; }
-      setWsStatus('Déconnecté');
-      ctrlError.textContent = `Connexion fermée (code ${e.code}). Reconnexion dans 3 s...`;
+      // Refus temporaire : le serveur répond bien, il ne faut ni compter un
+      // échec (qui ferait rebalayer le réseau) ni réessayer avant son délai.
+      const impose = delaiImpose;
+      delaiImpose = null;
+      if (!impose) {
+        setWsStatus('Déconnecté');
+        ctrlError.textContent = `Connexion fermée (code ${e.code}). Reconnexion dans 3 s...`;
+      }
 
       // Le pair d'en face n'est plus joignable : on nettoie l'état RTC et la
       // liste des pairs, sinon ils restent affichés comme connectés à vie.
@@ -997,7 +1076,7 @@ function showLocalImage(url){
       // Ne relance pas une nouvelle socket si on a fermé volontairement pour "reconnect"
       const voluntary = (e.code === 1000 && e.reason === 'reconnect');
       if (!voluntary) {
-        wsFailCount++;
+        if (!impose) wsFailCount++;
         // Après 2 échecs d'affilée, l'hôte mémorisé est probablement obsolète
         // (le serveur a changé de machine ou d'IP) → on rebalaye le réseau.
         const rescan = wsFailCount >= 2;
@@ -1012,7 +1091,7 @@ function showLocalImage(url){
           if (socket !== thisSocket) return;
           const url = await resolveSignalUrlAsync({ rescan });
           if (socket === thisSocket) createSocket(url);
-        }, 3000);
+        }, impose || 3000);
       }
     };
 
@@ -1047,22 +1126,32 @@ function showLocalImage(url){
           myId = msg.peerId;
           capacitesServeur = Array.isArray(msg.capacites) ? msg.capacites : [];
           addConsole(`[WS] hello - myId=${myId}`);
-          recevoirIceConfig(msg, { viaHello: true });
           return;
         }
         if (msg.type === 'version-refusee') {
           refuserVersion(msg.serveur);
           return;
         }
-        // Sans `from`, c'est le serveur qui répond. Avec, c'est la demande d'un
-        // pair relayée par un ancien serveur qui ignore ce message : hors sujet.
+        if (msg.type === 'salle-refusee') {
+          refuserSalle();
+          return;
+        }
+        if (msg.type === 'refus-connexion') {
+          refusTemporaire(msg);
+          return;
+        }
+        // Le relais n'est confié qu'aux membres d'une salle : il arrive juste
+        // après l'entrée (`initial`), puis à chaque renouvellement. Sans
+        // `from`, c'est bien le serveur qui parle.
         if (msg.type === 'ice-config') {
-          if (!msg.from) recevoirIceConfig(msg, { viaHello: false });
+          if (!msg.from) recevoirIceConfig(msg, { viaHello: !!msg.initial });
           return;
         }
 
         // Pairs déjà présents : un lien vers chacun de ceux que nous menons.
         if (msg.type === 'peers') {
+          // Entrée en salle réussie : un refus temporaire précédent est levé.
+          if (!versionBloquee && !bandeauFatal.hidden) leverRefusVersion();
           addConsole(`[WS] peers: ${msg.peers?.length || 0}`);
           for (const id of msg.peers || []) {
             // Signalés dans le tchat : sans ça on pouvait lire une déconnexion
@@ -1170,7 +1259,9 @@ function showLocalImage(url){
           setTimeout(()=>__seenChat.delete(key), 2000); // fenêtre 2s
           // évite le doublon local
           if (msg.from === myId) return;
-          appendChat({ from: msg.fromName || msg.from, text: msg.text || '' }, false);
+          // Le nom affiché vient de l'identité que le serveur relaie, jamais
+          // du message : personne ne parle au nom d'un autre.
+          appendChat({ from: peerLabel(msg.from), text: msg.text || '' }, false);
           return;
         }
 
@@ -1647,9 +1738,8 @@ function showLocalImage(url){
     const text = chatInput.value.trim();
     if (!text || !wsReady()) return;
     appendChat({ from: '(moi)', text }, true);
-    const payload = { type:'chat', text, from: myId };
-    payload.fromName = getDisplayName();
-    socket.send(JSON.stringify(payload));
+    // Ni nom ni émetteur : le serveur les impose (identité connue des pairs).
+    socket.send(JSON.stringify({ type: 'chat', text }));
     chatInput.value = '';
   }
 
@@ -1857,8 +1947,18 @@ function showLocalImage(url){
 		modal.setAttribute('aria-hidden','false');
 		ip.value = window.__signalIp || '';
 		nick.value = window.__nickname || '';
+		salleCode.value = codeSalle ? formaterCode(codeSalle) : '';
+		salleErreur.textContent = '';
 		setTimeout(()=>ip && ip.focus(), 20);
 	  }
+
+	  const salleCode = document.getElementById('salleCode');
+	  const salleErreur = document.getElementById('salleErreur');
+	  document.getElementById('btnNouvelleSalle').addEventListener('click', () => {
+		salleCode.value = nouveauCode();
+		salleErreur.textContent = '';
+		salleCode.select();
+	  });
 	  function closeModal(){ modal.setAttribute('aria-hidden','true'); }
 
 	  // Passe par une lambda : plus bas, `openModal` est réassigné pour rafraîchir
@@ -1871,11 +1971,23 @@ function showLocalImage(url){
 
 	  form.addEventListener('submit', (e)=>{
 		e.preventDefault();
+      // Salle : un code valable, ou rien (salle commune). Un code mal saisi
+      // ne part pas — on ne rejoindrait qu'une salle vide.
+      const saisie = salleCode.value.trim();
+      const code = saisie ? normaliserCode(saisie) : '';
+      if (code === null) {
+        salleErreur.textContent = 'Code invalide : 20 lettres et chiffres (sans 0, 1, l ni o), tirets facultatifs.';
+        return;
+      }
+      const salleChangee = code !== codeSalle;
+      codeSalle = code;
+      try { if (code) localStorage.setItem(SALLE_CLE, code); else localStorage.removeItem(SALLE_CLE); } catch {}
       // Stockage en mémoire volatile pour la session uniquement
       window.__signalIp = (ip.value || '').trim();
       window.__nickname = (nick.value || '').trim();
       // Champ vidé => l'utilisateur veut revenir en mode auto : on rebalaye.
-      connectFromModal({ rescan: !window.__signalIp });
+      // Autre salle : on se reconnecte même au même serveur.
+      connectFromModal({ rescan: !window.__signalIp, forcer: salleChangee });
       closeModal();
 	  });
 	  
@@ -2105,7 +2217,9 @@ function showLocalImage(url){
       addConsole(`[essaim] ${t.nom} abandonné : ${raison}.`);
       lecture.fermer(t.num);
     },
-    surProgres: (t) => { if (t === envoi?.essaimT) majProgressionEnvoi(); }
+    surProgres: (t) => { if (t === envoi?.essaimT) majProgressionEnvoi(); },
+    // Morceau faux écarté, page sans calcul d'empreintes : à savoir.
+    log: (texte) => addConsole(texte)
   });
 
   // Compteurs (octets envoyés, doublons) : diagnostic et tests.
@@ -2278,7 +2392,7 @@ function showLocalImage(url){
         const msg = JSON.parse(data);
         if (msg.type === 'chat') {
           if (msg.from === myId) return; // évite le doublon
-          appendChat({ from: msg.fromName || msg.from || peerLabel(de), text: msg.text || '' }, false);
+          appendChat({ from: peerLabel(de), text: msg.text || '' }, false);
           return;
         }
         recevoirApp(de, msg, 'RTC');

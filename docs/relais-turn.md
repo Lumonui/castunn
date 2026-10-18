@@ -89,8 +89,35 @@ denied-peer-ip=100.64.0.0-100.127.255.255
 denied-peer-ip=127.0.0.0-127.255.255.255
 denied-peer-ip=169.254.0.0-169.254.255.255
 denied-peer-ip=172.16.0.0-172.31.255.255
+denied-peer-ip=192.0.0.0-192.0.0.255
 denied-peer-ip=192.168.0.0-192.168.255.255
+denied-peer-ip=198.18.0.0-198.19.255.255
+denied-peer-ip=240.0.0.0-255.255.255.255
+denied-peer-ip=::1
+denied-peer-ip=fc00::-fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+denied-peer-ip=fe80::-febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+no-loopback-peers
+
+# Limites. Un « utilisateur » coturn est un participant Castunn (le nom
+# d'utilisateur porte son identifiant) ; une « allocation », un lien P2P
+# relayé.
+#  - 1 Mo/s (8 Mbit/s) par lien relayé, chaque sens compté à part :
+max-bps=1000000
+#  - 12 liens relayés à la fois par participant :
+user-quota=12
+#  - 1 200 au total (100 participants × 12), et 800 Mbit/s pour tout le relais,
+#    sous le 1 Gbit/s du VPS :
+total-quota=1200
+bps-capacity=100000000
+# Un nonce périmé oblige à se réauthentifier : des identifiants volés servent moins longtemps.
+stale-nonce=600
 ```
+
+Ce que coturn ne sait pas faire : borner le débit **total** d'une personne.
+`max-bps` vaut pour chaque lien relayé ; quelqu'un relayé vers trois pairs à
+la fois peut donc atteindre 3 Mo/s (et 12 Mo/s au pire, avec `user-quota`). En
+pratique, seuls les liens sans chemin direct passent par le relais : souvent
+un ou deux par personne.
 
 Écouter sur le port 443 demande un droit particulier à un service non root :
 
@@ -106,8 +133,9 @@ sudo systemctl restart coturn
 sudo systemctl status coturn
 ```
 
-Limites de débit, quotas et autres protections : voir la partie sécurité (à
-venir). Les lignes `denied-peer-ip` ci-dessus sont le minimum à ne pas omettre.
+Les lignes `denied-peer-ip` ci-dessus sont le minimum à ne pas omettre. Côté
+Castunn, le serveur de signalisation ne remet des identifiants qu'aux membres
+d'une salle, jamais à un simple visiteur.
 
 ## 5. Brancher Castunn
 

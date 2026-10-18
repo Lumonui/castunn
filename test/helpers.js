@@ -18,7 +18,10 @@ const VERSION = require('../package.json').version;
  */
 function startServer(port, { timeout = 8000, env = {} } = {}) {
   return new Promise((resolve, reject) => {
-    const environnement = { ...process.env, PORT: String(port) };
+    // Salle commune permise par défaut : les pages de test y entrent sans code,
+    // comme sur le serveur local de l'application. CASTUNN_SALLE_LIBRE: null
+    // donne un serveur public, qui n'accepte que les salles privées.
+    const environnement = { ...process.env, PORT: String(port), CASTUNN_SALLE_LIBRE: '1' };
     for (const [k, v] of Object.entries(env)) {
       if (v === null) delete environnement[k]; else environnement[k] = v;
     }
@@ -167,9 +170,18 @@ async function connect(port, name, options = {}) {
  * dans sa liste `peers` au lieu d'un `presence`, et le test échoue par
  * intermittence — pas le code.
  */
+/**
+ * Identifiant de salle valable pour un nom lisible de test : « default » tel
+ * quel, sinon une empreinte au format exigé (43 caractères base64url).
+ */
+function salle(nom) {
+  if (nom === 'default') return nom;
+  return require('crypto').createHash('sha256').update(`test:${nom}`).digest('base64url');
+}
+
 async function joinRoom(client, room, extra = {}) {
   // Le serveur refuse toute autre version que la sienne.
-  client.send({ type: 'join', room, version: VERSION, ...extra });
+  client.send({ type: 'join', room: salle(room), version: VERSION, ...extra });
   await client.waitForType('peers', () => true, { label: `entrée dans ${room}` });
   return client;
 }
@@ -204,4 +216,4 @@ function assertEqual(actual, expected, msg) {
   }
 }
 
-module.exports = { VERSION, startServer, httpGet, TestClient, connect, joinRoom, sleep, test, run, assert, assertEqual };
+module.exports = { VERSION, salle, startServer, httpGet, TestClient, connect, joinRoom, sleep, test, run, assert, assertEqual };

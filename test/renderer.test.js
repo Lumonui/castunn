@@ -388,6 +388,97 @@ app.whenReady().then(async () => {
     }
   });
 
+  /* --- Salles privées, sur un serveur public (étape 6) ---------------------- */
+  // 8086 : 8090 est pris sur la machine de développement (Wondershare écoute
+  // sur 127.0.0.1:8090 ; les connexions locales allaient chez lui).
+  const PORT_PUBLIC = Number(process.env.TEST_UI_PUBLIC_PORT || 8086);
+  const publique = await startServer(PORT_PUBLIC, { env: { CASTUNN_SALLE_LIBRE: null } });
+  const pagesSalle = [];
+  async function pagePublique(hash = '') {
+    const p = new BrowserWindow({ show: false, webPreferences: { contextIsolation: true } });
+    pagesSalle.push(p);
+    // Le stockage est partagé avec les autres pages du test : une écriture peut
+    // n'être visible qu'un instant plus tard. On recharge jusqu'à ce que la
+    // page parle bien au serveur public.
+    for (let essai = 0; essai < 5; essai++) {
+      await p.loadFile(path.join(PROJECT, 'castunn.html'));
+      await p.webContents.executeJavaScript(`localStorage.clear(); localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT_PUBLIC}'); true`);
+      await sleep(300);
+      await p.loadFile(path.join(PROJECT, 'castunn.html'), hash ? { hash } : {});
+      const url = await waitUntil(() => p.webContents.executeJavaScript('window.__castunnSignalUrl || ""'), { label: 'adresse du serveur' });
+      if (url === `ws://127.0.0.1:${PORT_PUBLIC}`) return p;
+    }
+    throw new Error('la page ne joint pas le serveur public');
+  }
+  const lire = (p, js) => p.webContents.executeJavaScript(js);
+  const statutDe = (p) => lire(p, 'document.getElementById("wsStatus").textContent');
+  const bandeauDe = (p) => lire(p, `(() => { const b = document.getElementById('bandeauFatal'); return b.hidden ? '' : b.textContent; })()`);
+  let code = '';
+
+  await check('serveur public sans code de salle : erreur claire, sans nouvel essai', async () => {
+    const p = await pagePublique();
+    const texte = await waitUntil(() => bandeauDe(p), { label: 'bandeau' }).catch(async (e) => {
+      throw new Error(`${e.message} — page : ${(await lire(p, 'document.getElementById("consoleLog").textContent')).split('\n').slice(-6).join(' | ')}`
+        + ` — serveur : ${publique.sortie().split('\n').slice(-4).join(' | ')}`);
+    });
+    if (!/n’accepte que les salles privées/.test(texte)) throw new Error('bandeau : ' + texte);
+    if ((await statutDe(p)) !== 'Salle requise') throw new Error('statut : ' + await statutDe(p));
+    const refus = () => (publique.sortie().match(/refusé : salle/g) || []).length;
+    const avant = refus();
+    await sleep(4000);
+    if (refus() !== avant) throw new Error('la page a réessayé seule');
+  });
+
+  await check('« Nouvelle salle » puis Enregistrer : on entre, et le code est mémorisé', async () => {
+    const p = pagesSalle[0];
+    code = await lire(p, `document.getElementById('settingsBtn').click();
+      document.getElementById('btnNouvelleSalle').click();
+      const c = document.getElementById('salleCode').value;
+      document.getElementById('settingsForm').requestSubmit(); c`);
+    await waitUntil(async () => (await statutDe(p)) === 'Connecté' && !(await bandeauDe(p)), { label: 'connecté, bandeau levé' });
+    const memorise = await lire(p, `localStorage.getItem('castunn.salle')`);
+    if (memorise !== code.replace(/-/g, '')) throw new Error(`mémorisé : ${memorise}, attendu ${code}`);
+    if (!(await lire(p, 'document.getElementById("consoleLog").textContent')).includes('salle privée')) throw new Error('console');
+    if ((await lire(p, 'document.getElementById("consoleLog").textContent')).includes(code)) throw new Error('le code ne doit pas s’afficher dans la console');
+  });
+
+  await check('un lien #salle=<code> rejoint la même salle ; un autre code, une autre salle', async () => {
+    const meme = await pagePublique(`salle=${code}`);
+    await waitUntil(async () => (await statutDe(meme)) === 'Connecté', { label: 'page du lien connectée' });
+    await waitUntil(async () => (await lire(pagesSalle[0], 'document.getElementById("peersCount").textContent')) === '1',
+      { label: 'les deux se voient' });
+    const autre = await pagePublique('salle=zzzz-zzzz-zzzz-zzzz-zzzz');
+    await waitUntil(async () => (await statutDe(autre)) === 'Connecté', { label: 'autre salle connectée' }).catch(async (e) => {
+      throw new Error(`${e.message} — statut ${await statutDe(autre)} — page : ${(await lire(autre, 'document.getElementById("consoleLog").textContent')).split('\n').slice(-5).join(' | ')}`);
+    });
+    await sleep(800);
+    if ((await lire(pagesSalle[0], 'document.getElementById("peersCount").textContent')) !== '1') {
+      throw new Error('une autre salle est visible');
+    }
+  });
+  for (const p of pagesSalle.splice(0)) p.destroy();
+  await publique.stop();
+
+  await check('serveur plein : le refus est expliqué, et la page attend avant de réessayer', async () => {
+    const plein = await startServer(PORT_PUBLIC, { env: { CASTUNN_MAX_CLIENTS: '1' } });
+    const occupant = new WebSocket(`ws://127.0.0.1:${PORT_PUBLIC}`);
+    await new Promise((r) => occupant.once('open', r));
+    try {
+      const p = await pagePublique();
+      const texte = await waitUntil(() => bandeauDe(p), { label: 'bandeau de refus' });
+      if (!/serveur est plein/.test(texte) || !/Nouvel essai automatique dans \d+ s/.test(texte)) throw new Error('bandeau : ' + texte);
+      if ((await statutDe(p)) !== 'Refusé') throw new Error('statut : ' + await statutDe(p));
+      const refus = () => (plein.sortie().match(/connexion refusée/g) || []).length;
+      const avant = refus();
+      await sleep(4500);   // au-delà du réessai habituel de 3 s
+      if (refus() !== avant) throw new Error('la page a réessayé avant le délai indiqué');
+    } finally {
+      occupant.close();
+      for (const p of pagesSalle.splice(0)) p.destroy();
+      await plein.stop();
+    }
+  });
+
   const failed = results.filter((r) => !r.ok).length;
   console.log(`\n${results.length - failed}/${results.length} tests passés.`);
 

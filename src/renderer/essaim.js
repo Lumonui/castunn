@@ -92,6 +92,16 @@ export function dePlages(plages, n) {
   return possede;
 }
 
+/** SHA-256 en base64, ou null sans crypto.subtle (page non sécurisée). */
+export async function hacherParDefaut(donnees) {
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return null;
+  const e = new Uint8Array(await subtle.digest('SHA-256', donnees));
+  let b = '';
+  for (const o of e) b += String.fromCharCode(o);
+  return btoa(b);
+}
+
 /* ------------------------------------------------------------------------ */
 /* Moteur                                                                    */
 /* ------------------------------------------------------------------------ */
@@ -121,7 +131,10 @@ export function createEssaim(deps = {}) {
     taillePiece = TAILLE_PIECE,
     topMs = TOP_MS,
     delaiDemande = DELAI_DEMANDE_MS,
-    maintenant = () => Date.now()
+    maintenant = () => Date.now(),
+    // Empreinte d'un morceau (base64 de SHA-256), ou null si le calcul est
+    // indisponible (navigateur en http : pas de crypto.subtle).
+    hacher = hacherParDefaut
   } = deps;
 
   const transferts = new Map();   // num -> transfert
@@ -129,7 +142,10 @@ export function createEssaim(deps = {}) {
   const pompes = new Set();       // voisins dont la pompe tourne
   const attentes = new Set();     // résolveurs de la boucle de poussée
   let minuteur = null;
-  const stats = { envoyes: 0, octetsEnvoyes: 0, recus: 0, doublons: 0 };
+  const stats = { envoyes: 0, octetsEnvoyes: 0, recus: 0, doublons: 0, corrompus: 0 };
+  // Ce poste sait-il calculer des empreintes ? Connu dès le premier instant.
+  let peutHacher = false;
+  const sait = hacher(new ArrayBuffer(0)).then((h) => (peutHacher = !!h), () => (peutHacher = false));
 
   const json = (id, msg) => envoyer(id, JSON.stringify(msg));
 
@@ -183,6 +199,17 @@ export function createEssaim(deps = {}) {
         if (!t || t.annule) continue;
         const donnees = await donneesPiece(t, job.index);
         if (!donnees || !transferts.has(job.num)) continue;
+        // Source : l'empreinte du morceau part vers tous les membres avant le
+        // morceau lui-même (sur ce canal, l'ordre est garanti).
+        if (t.role === 'source' && t.verifie && !t.empreintes[job.index]) {
+          const h = await hacher(donnees);
+          if (!transferts.has(job.num)) continue;
+          if (h && !t.empreintes[job.index]) {
+            t.empreintes[job.index] = h;
+            const msg = { t: 'empreintes', num: t.num, debut: job.index, h: [h] };
+            for (const m of t.membres) if (ouvert(m)) json(m, msg);
+          }
+        }
         if (envoyer(id, encoderPiece(job.type, job.num, job.index, donnees))) {
           stats.envoyes++;
           stats.octetsEnvoyes += donnees.byteLength;
@@ -219,19 +246,27 @@ export function createEssaim(deps = {}) {
       n, taillePiece, fichier,
       membres: new Set(membres.filter((id) => id !== moi())),
       possedeDe: new Map(), complets: new Set(),
-      frontiere: 0, annule: false, pousses: 0
+      frontiere: 0, annule: false, pousses: 0,
+      // Empreintes des morceaux, calculées à la première lecture de chacun :
+      // pas de calcul préalable sur tout le fichier, l'envoi démarre aussitôt.
+      empreintes: [], verifie: false
     };
     transferts.set(num, t);
-    for (const id of t.membres) annoncer(t, id);
     demarrerTop();
-    t.termine = pousser(t);
+    t.termine = sait.then((v) => {
+      t.verifie = v;
+      for (const id of t.membres) annoncer(t, id);
+      return pousser(t);
+    });
     return t;
   }
 
   function annoncer(t, id) {
     json(id, {
       t: 'annonce', num: t.num, nom: t.nom, taille: t.taille, mime: t.mime, kind: t.kind,
-      n: t.n, piece: t.taillePiece, membres: [...t.membres], frontiere: t.frontiere
+      n: t.n, piece: t.taillePiece, membres: [...t.membres], frontiere: t.frontiere,
+      // Les membres vérifient chaque morceau, d'où qu'il vienne.
+      empreintes: t.verifie
     });
   }
 
@@ -241,6 +276,11 @@ export function createEssaim(deps = {}) {
     if (!t || t.role !== 'source' || t.annule || t.membres.has(id) || id === moi()) return;
     t.membres.add(id);
     annoncer(t, id);
+    // Les empreintes déjà calculées, par paquets (il arrive en cours de route).
+    for (let debut = 0; debut < t.empreintes.length; debut += 256) {
+      const h = t.empreintes.slice(debut, debut + 256);
+      if (h.some(Boolean)) json(id, { t: 'empreintes', num: t.num, debut, h });
+    }
     const msg = { t: 'membres', num: t.num, membres: [...t.membres] };
     for (const m of t.membres) if (m !== id) json(m, msg);
   }
@@ -289,8 +329,13 @@ export function createEssaim(deps = {}) {
       possedeDe: new Map(), complets: new Set(),
       pieces: new Array(m.n | 0), possede: new Uint8Array(m.n | 0), nbRecus: 0,
       frontiere: Number(m.frontiere) || 0, demandes: new Map(),
-      annule: false, complet: false, publie: -1
+      annule: false, complet: false, publie: -1,
+      // Vérification des morceaux : empreintes données par la source, morceaux
+      // arrivés avant leur empreinte, pairs pris à relayer des morceaux faux.
+      verifie: !!m.empreintes && peutHacher,
+      empreintes: new Array(m.n | 0), enAttente: new Map(), suspects: new Set()
     };
+    if (m.empreintes && !peutHacher) log(`[essaim] « ${t.nom} » : morceaux non vérifiés (page non sécurisée, sans calcul d’empreintes).`);
     if (t.n !== Math.ceil(t.taille / t.taillePiece) && !(t.taille === 0 && t.n === 1)) return;
     if (surAnnonce(t) === false) { json(de, { t: 'refus', num: t.num }); return; }
     transferts.set(t.num, t);
@@ -362,7 +407,7 @@ export function createEssaim(deps = {}) {
       if (d && now - d.t < 1000) continue;
       let choix = null;
       for (const id of voisins) {
-        if (id === t.source || !t.possedeDe.get(id)?.[index]) continue;
+        if (id === t.source || t.suspects.has(id) || !t.possedeDe.get(id)?.[index]) continue;
         if (!choix || tampon(id) < tampon(choix)) choix = id;
       }
       if (!choix && voisins.includes(t.source)) choix = t.source;
@@ -430,7 +475,7 @@ export function createEssaim(deps = {}) {
       if (retard < RETARD_VOISIN) break;          // la poussée n'y est pas encore
       let choix = null;
       for (const id of voisins) {
-        if (id === t.source) continue;
+        if (id === t.source || t.suspects.has(id)) continue;
         const a = t.possedeDe.get(id);
         if (!a || !a[i] || (enCours.get(id) || 0) >= DEMANDES_PAR_VOISIN) continue;
         if (!choix || tampon(id) < tampon(choix)) choix = id;
@@ -452,7 +497,9 @@ export function createEssaim(deps = {}) {
     const voisins = voisinsDe(t);
     for (let i = 0; i < t.n; i++) {
       if (t.possede[i]) continue;
-      if (!voisins.some((id) => t.possedeDe.get(id)?.[i])) {
+      // Sans la source, un morceau dont on n'a pas l'empreinte ne pourra
+      // jamais être vérifié : autant le dire tout de suite.
+      if ((t.verifie && !t.empreintes[i]) || !voisins.some((id) => !t.suspects.has(id) && t.possedeDe.get(id)?.[i])) {
         abandonner(t, 'la source est partie avant la fin');
         return;
       }
@@ -524,6 +571,33 @@ export function createEssaim(deps = {}) {
       if (t?.complet) stats.doublons++;
       return;
     }
+    if (t.verifie) verifier(t, p, de);
+    else stocker(t, p.index, p.donnees, p.type, de);
+  }
+
+  /**
+   * Morceau comparé à l'empreinte donnée par la source, avant d'être gardé ou
+   * relayé. Faux : jeté (il sera redemandé ailleurs), et le pair qui l'a
+   * fourni n'est plus écouté pour ce fichier. Arrivé avant son empreinte (un
+   * relais plus rapide que la source) : il l'attend.
+   */
+  async function verifier(t, p, de) {
+    if (t.suspects.has(de)) return;
+    if (t.possede[p.index]) { stats.doublons++; return; }
+    const attendue = t.empreintes[p.index];
+    if (!attendue) { t.enAttente.set(p.index, { p, de }); return; }
+    let h = null;
+    try { h = await hacher(p.donnees); } catch { h = null; }
+    if (t.annule || t.complet || !transferts.has(t.num) || t.possede[p.index]) return;
+    if (h !== attendue) {
+      stats.corrompus++;
+      t.demandes.delete(p.index);
+      const pair = de !== t.source;
+      if (pair) { t.suspects.add(de); t.possedeDe.delete(de); }
+      log(`[essaim] « ${t.nom} » : morceau ${p.index} faux, reçu de ${de} — ignoré`
+        + (pair ? ', ce pair n’est plus écouté pour ce fichier.' : '.'));
+      return;
+    }
     stocker(t, p.index, p.donnees, p.type, de);
   }
 
@@ -536,7 +610,21 @@ export function createEssaim(deps = {}) {
       case 'membres':
         if (de === t.source && Array.isArray(m.membres)) t.membres = new Set(m.membres);
         break;
+      case 'empreintes': {
+        // De la source seule : elle seule a le fichier d'origine.
+        if (de !== t.source || t.role !== 'pair' || !t.verifie || !Array.isArray(m.h)) break;
+        const debut = Number(m.debut) >>> 0;
+        m.h.slice(0, 256).forEach((h, k) => {
+          const index = debut + k;
+          if (index >= t.n || typeof h !== 'string' || h.length > 64 || t.empreintes[index]) return;
+          t.empreintes[index] = h;
+          const attente = t.enAttente.get(index);
+          if (attente) { t.enAttente.delete(index); verifier(t, attente.p, attente.de); }
+        });
+        break;
+      }
       case 'possede':
+        if (t.suspects?.has(de)) break;   // ce qu'il dit avoir ne nous intéresse plus
         if (m.complet) {
           t.complets.add(de);
           t.possedeDe.set(de, new Uint8Array(t.n).fill(1));

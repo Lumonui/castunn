@@ -15,6 +15,7 @@ import { describeRtcPath, formatRtcPath, describeCollectes, summarizeGathered } 
 import { sanitizeTurnServers, credentialsExpiring, turnFailureReason, explainNoRtc }
   from '../src/renderer/turn-config.js';
 import { VERSION, DATE_VERSION } from '../src/renderer/version.js';
+import { ALPHABET, nouveauCode, normaliserCode, formaterCode, identifiantSalle } from '../src/renderer/salle.js';
 import { readFileSync } from 'node:fs';
 
 // Les cas sont collectés puis exécutés en séquence : un test asynchrone doit
@@ -37,6 +38,35 @@ test('la page annonce la version de package.json (le serveur refuse toute autre)
   const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
   eq(VERSION, version, 'src/renderer/version.js en retard : lancez « npm run version:sync »');
   ok(/^\d\d-\d\d-\d{4}$/.test(DATE_VERSION), 'date : ' + DATE_VERSION);
+});
+
+/* -------------------------------- salles -------------------------------- */
+
+test('un code de salle : 20 caractères lisibles, en groupes, jamais deux fois le même', () => {
+  const codes = Array.from({ length: 50 }, () => nouveauCode());
+  ok(codes.every((c) => /^[a-z2-9]{4}(-[a-z2-9]{4}){4}$/.test(c)), codes[0]);
+  ok(codes.every((c) => ![...c.replace(/-/g, '')].some((x) => '01lo'.includes(x))), 'ni 0, 1, l, o');
+  eq(new Set(codes).size, 50, 'distincts');
+  eq(256 % ALPHABET.length, 0, 'tirage sans biais');
+});
+
+test('un code saisi est normalisé ; une saisie douteuse est refusée', () => {
+  eq(normaliserCode(' ABCD-efgh ijkm-npqr-STUV '), 'abcdefghijkmnpqrstuv');
+  eq(normaliserCode('abcd-efgh-ijkm-npqr-stu'), null, 'trop court');
+  eq(normaliserCode('abcd-efgh-ijkm-npqr-stu0'), null, 'caractère ambigu');
+  eq(normaliserCode(''), null);
+  eq(formaterCode('abcdefghijkmnpqrstuv'), 'abcd-efgh-ijkm-npqr-stuv');
+});
+
+test('le serveur ne reçoit qu’une empreinte du code, la même pour tous ceux qui l’ont', async () => {
+  const id = await identifiantSalle('abcd-efgh-ijkm-npqr-stuv');
+  ok(/^[A-Za-z0-9_-]{43}$/.test(id), 'format exigé par le serveur : ' + id);
+  eq(await identifiantSalle('ABCDEFGHIJKMNPQRSTUV'), id, 'même salle quelle que soit la saisie');
+  ok(!id.includes('abcd'), 'le code n’y figure pas');
+  ok((await identifiantSalle('abcd-efgh-ijkm-npqr-stuw')) !== id, 'un caractère de plus : autre salle');
+  let erreur = null;
+  try { await identifiantSalle('abcd-efgh-ijkm-npqr-stuv', null); } catch (e) { erreur = e.message; }
+  ok(/non sécurisée/.test(erreur || ''), 'sans crypto.subtle (http) : erreur explicite');
 });
 
 /* ------------------------------- protocol ------------------------------- */

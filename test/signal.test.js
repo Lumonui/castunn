@@ -153,11 +153,12 @@ test('le tchat est relayé aux autres et jamais renvoyé à son auteur', async (
   await joinRoom(b, room, { ip: '10.0.0.2', nick: 'bob' });
   await a.waitForType('presence', (m) => m.action === 'join');
 
-  a.send({ type: 'chat', text: 'salut Bob', fromName: '10.0.0.1(alice)' });
+  // Un nom affiché choisi par l'émetteur permettrait de parler au nom d'un autre.
+  a.send({ type: 'chat', text: 'salut Bob', fromName: '10.0.0.2(bob)' });
 
   const msg = await b.waitForType('chat');
   assertEqual(msg.text, 'salut Bob', 'contenu');
-  assertEqual(msg.fromName, '10.0.0.1(alice)', 'nom affiché');
+  assert(!('fromName' in msg), 'aucun nom choisi par l’émetteur n’est relayé : ' + JSON.stringify(msg));
   assertEqual(msg.from, a.peerId, 'émetteur');
 
   await a.expectNothing((e) => e.json?.type === 'chat', 300, 'écho de son propre chat');
@@ -270,6 +271,11 @@ const URLS_ATTENDUES = ['turn:turn.exemple.test:3478?transport=udp', 'turns:turn
 const ENV_TURN = { TURN_URLS: URLS, TURN_SECRET: SECRET, TURN_TTL: '3600' };
 
 const helloDe = (client) => client.received.find((e) => e.json && e.json.type === 'hello').json;
+/** Le relais est confié à l'entrée en salle (ice-config `initial`), jamais au simple visiteur. */
+async function relaisInitial(client) {
+  await joinRoom(client, 'relais', {});
+  return client.waitForType('ice-config', (m) => m.initial === true);
+}
 
 /** Vérifie le contrat « TURN REST API » : c'est ce que coturn recalculera. */
 function verifierIdentifiants(cfg, peerId, ttl) {
@@ -285,11 +291,13 @@ function verifierIdentifiants(cfg, peerId, ttl) {
   assertEqual(s.credential, hmac, 'credential = base64(HMAC-SHA1(secret, username))');
 }
 
-test('avec TURN_URLS et TURN_SECRET, le hello porte des identifiants temporaires', async () => {
+test('avec TURN_URLS et TURN_SECRET, l’entrée en salle donne des identifiants temporaires — pas le hello', async () => {
   const srv = await startServer(TURN_PORT, { env: ENV_TURN });
   try {
     const a = await connect(TURN_PORT, 'alice');
-    verifierIdentifiants(helloDe(a), a.peerId, 3600);
+    const hello = helloDe(a);
+    assert(!('iceServers' in hello), 'un simple visiteur ne reçoit pas le relais : ' + JSON.stringify(hello));
+    verifierIdentifiants(await relaisInitial(a), a.peerId, 3600);
     assert(!JSON.stringify(a.received).includes(SECRET), 'le secret ne sort jamais du serveur');
     await sleep(100);
     assert(srv.sortie().includes('[TURN] relais annoncé'), 'annonce journalisée au démarrage');
@@ -307,34 +315,43 @@ test('ice-config renouvelle les identifiants, pour l’émetteur seul, sans se l
     await joinRoom(b, 'turn', {});
 
     a.send({ type: 'ice-config' });
-    const cfg = await a.waitForType('ice-config');
+    const cfg = await a.waitForType('ice-config', (m) => !m.initial);
     assert(!cfg.from, 'réponse du serveur lui-même, pas un message relayé');
     verifierIdentifiants(cfg, a.peerId, 3600);
-    await b.expectNothing((e) => e.json && e.json.type === 'ice-config', 300, 'demande relayée à la room');
+    await b.expectNothing((e) => e.json && e.json.type === 'ice-config' && !e.json.initial, 300, 'demande relayée à la room');
 
     a.send({ type: 'ice-config' });          // aussitôt après : ignorée
     await sleep(400);
-    const reponses = a.received.filter((e) => e.json && e.json.type === 'ice-config').length;
+    const reponses = a.received.filter((e) => e.json && e.json.type === 'ice-config' && !e.json.initial).length;
     assertEqual(reponses, 1, 'une seconde demande dans les 10 s est ignorée');
     await a.close(); await b.close();
   } finally { await srv.stop(); }
 });
 
-test('sans configuration TURN, le hello est inchangé et ice-config répond vide', async () => {
+test('sans configuration TURN, l’entrée en salle annonce « aucun relais »', async () => {
   const a = await connect(PORT, 'alice');      // serveur principal : sans TURN_*
   const hello = helloDe(a);
   assert(!('iceServers' in hello) && !('iceExpiresAt' in hello), 'rien d’annoncé : ' + JSON.stringify(hello));
-  a.send({ type: 'ice-config' });
-  const cfg = await a.waitForType('ice-config');
+  const cfg = await relaisInitial(a);
   assertEqual(JSON.stringify(cfg.iceServers), '[]', 'aucun relais');
   await a.close();
+});
+
+test('un visiteur hors salle n’obtient jamais d’identifiants relais', async () => {
+  const srv = await startServer(TURN_PORT, { env: ENV_TURN });
+  try {
+    const a = await connect(TURN_PORT, 'curieux');
+    a.send({ type: 'ice-config' });
+    await a.expectNothing((e) => e.json?.type === 'ice-config', 400, 'identifiants donnés hors salle');
+    await a.close();
+  } finally { await srv.stop(); }
 });
 
 test('configuration TURN incomplète ou invalide : rien d’annoncé, et le journal le dit', async () => {
   const sansSecret = await startServer(TURN_PORT, { env: { TURN_URLS: URLS, TURN_SECRET: null } });
   try {
     const a = await connect(TURN_PORT, 'alice');
-    assert(!('iceServers' in helloDe(a)), 'sans secret, aucun relais');
+    assertEqual(JSON.stringify((await relaisInitial(a)).iceServers), '[]', 'sans secret, aucun relais');
     await sleep(100);
     assert(sansSecret.sortie().includes('TURN_URLS sans TURN_SECRET'), 'avertissement attendu');
     await a.close();
@@ -345,7 +362,7 @@ test('configuration TURN incomplète ou invalide : rien d’annoncé, et le jour
   });
   try {
     const a = await connect(TURN_PORT, 'alice');
-    assertEqual(JSON.stringify(helloDe(a).iceServers[0].urls), '["turn:ok.test:3478"]', 'URL non TURN écartée');
+    assertEqual(JSON.stringify((await relaisInitial(a)).iceServers[0].urls), '["turn:ok.test:3478"]', 'URL non TURN écartée');
     await sleep(100);
     assert(urlInvalide.sortie().includes('URL ignorée'), 'avertissement attendu');
     await a.close();
@@ -356,7 +373,7 @@ test('la durée de validité des identifiants est bornée', async () => {
   const srv = await startServer(TURN_PORT, { env: { ...ENV_TURN, TURN_TTL: '5' } });
   try {
     const a = await connect(TURN_PORT, 'alice');
-    const exp = Number(helloDe(a).iceServers[0].username.split(':')[0]);
+    const exp = Number((await relaisInitial(a)).iceServers[0].username.split(':')[0]);
     const ttl = exp - Math.floor(Date.now() / 1000);
     assert(ttl >= 295 && ttl <= 300, `5 s demandées, plancher de 300 s attendu (obtenu ${ttl})`);
     await a.close();
@@ -506,6 +523,180 @@ test('une annulation adressée suit le même chemin que l’envoi', async () => 
   a.sendBinary(Buffer.from([2]));
   await c.expectNothing((e) => e.json && e.json.type === 'binary-meta' && e.json.fileId !== 'Z', 300, 'réannonce après annulation');
   await a.close(); await b.close(); await c.close();
+});
+
+/* ======================== Sécurité et limites (étape 6) ======================== */
+
+const os = require('os');
+const { TestClient } = require('./helpers');
+const SECU_PORT = Number(process.env.TEST_SECU_PORT || 8095);
+
+async function avecServeur(env, fn) {
+  const srv = await startServer(SECU_PORT, { env: { TURN_URLS: null, TURN_SECRET: null, ...env } });
+  try { await fn(srv); } finally { await srv.stop(); }
+}
+const fermeture = (c) => new Promise((r) => c.ws.once('close', (code, raison) => r({ code, raison: String(raison) })));
+/** Client brut (le refus arrive à la place du hello). */
+async function brut(port, nom, options) {
+  const c = new TestClient(`ws://127.0.0.1:${port}`, nom, options);
+  await c.open();
+  return c;
+}
+const depuis = (ip) => ({ headers: { 'x-forwarded-for': ip } });
+
+test('hors d’une salle, un client ne fait parvenir rien à personne', async () => {
+  const a = await connect(PORT, 'alice'); await joinRoom(a, 'cible', {});
+  const intrus = await connect(PORT, 'intrus');
+  const avant = a.received.length;
+  intrus.send({ type: 'chat', text: 'diffusion globale ?' });
+  intrus.send({ type: 'ping', id: 'p' });
+  intrus.send({ type: 'audio', url: 'https://x.test/a.mp3' });
+  intrus.send({ type: 'stop' });
+  intrus.send({ type: 'announce', nick: 'intrus' });
+  intrus.send({ type: 'offer', to: a.peerId, sdp: 'v=0' });
+  intrus.ws.send('texte brut, pas du JSON');
+  intrus.sendBinary(Buffer.from([1, 2, 3]));
+  await sleep(400);
+  const recus = a.received.slice(avant).map((e) => e.json?.type || (e.binary ? '<binaire>' : '<texte>'));
+  assertEqual(JSON.stringify(recus), '[]', 'reçu de l’intrus');
+  await a.close(); await intrus.close();
+});
+
+test('la signalisation P2P ne franchit pas les salles', async () => {
+  const a = await connect(PORT, 'alice'); await joinRoom(a, 'salle-1', {});
+  const b = await connect(PORT, 'bob');   await joinRoom(b, 'salle-2', {});
+  a.send({ type: 'offer', to: b.peerId, sdp: 'v=0-intrusion' });
+  a.send({ type: 'ice', to: b.peerId, candidate: { candidate: 'x' } });
+  a.send({ type: 'pong', to: b.peerId, id: 'p' });
+  await b.expectNothing((e) => ['offer', 'ice', 'pong'].includes(e.json?.type), 400, 'signalisation d’une autre salle');
+  await a.close(); await b.close();
+});
+
+test('les identifiants de pairs sont imprévisibles (12 caractères tirés au hasard)', async () => {
+  const ids = [];
+  for (let i = 0; i < 5; i++) { const c = await connect(PORT, 'c' + i); ids.push(c.peerId); await c.close(); }
+  assert(ids.every((id) => /^[a-z0-9]{12}$/.test(id)), JSON.stringify(ids));
+  assertEqual(new Set(ids).size, ids.length, 'identifiants distincts');
+});
+
+test('pseudo et tchat sont bornés', async () => {
+  const a = await connect(PORT, 'alice'); await joinRoom(a, 'bornes', {});
+  const b = await connect(PORT, 'bob');   await joinRoom(b, 'bornes', { nick: 'b'.repeat(500) });
+  const presence = await a.waitForType('presence', (m) => m.action === 'join');
+  assertEqual(presence.nick.length, 40, 'pseudo');
+  b.send({ type: 'chat', text: 'x'.repeat(5000) });
+  assertEqual((await a.waitForType('chat')).text.length, 2000, 'tchat');
+  await a.close(); await b.close();
+});
+
+test('un message démesuré ferme la connexion (1009), sans encombrer la mémoire', async () => {
+  const a = await connect(PORT, 'alice');
+  const ferme = fermeture(a);
+  a.ws.send(JSON.stringify({ type: 'chat', text: 'x'.repeat(300 * 1024) }));
+  assertEqual((await ferme).code, 1009, 'code de fermeture');
+  // Avant, cette erreur arrêtait le serveur entier.
+  const b = await connect(PORT, 'après');
+  await b.close();
+});
+
+test('une trame piégée d’un client refusé ne fait pas tomber le serveur', async () => {
+  await avecServeur({ CASTUNN_MAX_CLIENTS: '1' }, async (srv) => {
+    const present = await connect(SECU_PORT, 'present', depuis('203.0.113.30'));
+    const refuse = await brut(SECU_PORT, 'refuse', depuis('203.0.113.31'));
+    refuse.ws.send('x'.repeat(300 * 1024));
+    await sleep(300);
+    assert(srv.child.exitCode === null, 'serveur arrêté : ' + srv.sortie().split('\n').slice(-5).join(' | '));
+    await present.close();
+  });
+});
+
+test('serveur public : la salle commune est refusée, une salle privée est acceptée', async () => {
+  await avecServeur({ CASTUNN_SALLE_LIBRE: null }, async (srv) => {
+    for (const room of ['default', 'trop-court', 'x'.repeat(43) + '!']) {
+      const c = await connect(SECU_PORT, 'commun');
+      const ferme = fermeture(c);
+      c.send({ type: 'join', room, version: VERSION });
+      const refus = await c.waitForType('salle-refusee');
+      assertEqual(refus.salleLibre, false, 'le client sait que le serveur est public');
+      assertEqual((await ferme).code, 4010, `fermeture pour « ${room} »`);
+    }
+    const p = await connect(SECU_PORT, 'prive');
+    await joinRoom(p, 'notre-salle', {});   // identifiant de 43 caractères
+    await p.close();
+    assert(srv.sortie().includes('salles privées seulement'), 'mode annoncé au démarrage');
+  });
+});
+
+test('au plus 2 connexions par adresse (réglable) : la suivante est refusée avec la raison', async () => {
+  await avecServeur({ CASTUNN_MAX_PAR_IP: '2', CASTUNN_CONNEXIONS_PAR_MINUTE: '50' }, async () => {
+    const c1 = await connect(SECU_PORT, 'c1', depuis('203.0.113.5'));
+    const c2 = await connect(SECU_PORT, 'c2', depuis('203.0.113.5'));
+    const c3 = await brut(SECU_PORT, 'c3', depuis('203.0.113.5'));
+    const ferme = fermeture(c3);
+    const refus = await c3.waitForType('refus-connexion');
+    assertEqual(refus.raison, 'trop-de-connexions', 'raison');
+    assert(/2 connexions/.test(refus.message) && refus.reessayerDans > 0, JSON.stringify(refus));
+    assertEqual((await ferme).code, 4029, 'code de fermeture');
+    assert(!c3.received.some((e) => e.json?.type === 'hello'), 'aucun identifiant pour un refusé');
+    // Une autre adresse, et la machine elle-même, ne sont pas touchées.
+    const autre = await connect(SECU_PORT, 'autre', depuis('198.51.100.9'));
+    const local = await connect(SECU_PORT, 'local');
+    await c1.close();
+    const c4 = await connect(SECU_PORT, 'c4', depuis('203.0.113.5'));   // une place s'est libérée
+    for (const c of [c2, autre, local, c4]) await c.close();
+  });
+});
+
+test('au plus 3 nouvelles connexions par minute et par adresse (réglable)', async () => {
+  await avecServeur({ CASTUNN_MAX_PAR_IP: '50', CASTUNN_CONNEXIONS_PAR_MINUTE: '3' }, async () => {
+    for (let i = 0; i < 3; i++) await (await connect(SECU_PORT, 'r' + i, depuis('203.0.113.6'))).close();
+    const c = await brut(SECU_PORT, 'r4', depuis('203.0.113.6'));
+    const refus = await c.waitForType('refus-connexion');
+    assert(/Réessayez dans \d+ s/.test(refus.message), refus.message);
+    assert(refus.reessayerDans >= 5 && refus.reessayerDans <= 60, 'délai : ' + refus.reessayerDans);
+  });
+});
+
+test('au plus 3 clients au total (réglable) : serveur plein', async () => {
+  await avecServeur({ CASTUNN_MAX_CLIENTS: '3' }, async () => {
+    const presents = [];
+    for (let i = 0; i < 3; i++) presents.push(await connect(SECU_PORT, 'p' + i, depuis(`203.0.113.${10 + i}`)));
+    const c = await brut(SECU_PORT, 'p4', depuis('203.0.113.20'));
+    const ferme = fermeture(c);
+    assertEqual((await c.waitForType('refus-connexion')).raison, 'serveur-plein');
+    assertEqual((await ferme).code, 4503);
+    for (const p of presents) await p.close();
+  });
+});
+
+test('un client bridé à 64 Kio/s : tout arrive, mais au rythme imposé', async () => {
+  await avecServeur({ CASTUNN_DEBIT_MAX: String(64 * 1024) }, async () => {
+    const a = await connect(SECU_PORT, 'rapide'); await joinRoom(a, 'debit', {});
+    const b = await connect(SECU_PORT, 'lecteur'); await joinRoom(b, 'debit', {});
+    await a.waitForType('presence', (m) => m.action === 'join');
+    const t0 = Date.now();
+    a.send({ type: 'binary-meta', filename: 'f', size: 4 * 65536, kind: 'file', fileId: 'D' });
+    for (let i = 0; i < 4; i++) a.sendBinary(Buffer.alloc(65536, i));
+    for (let i = 0; i < 4; i++) {
+      await b.waitFor((e) => e.binary && e.binary[0] === i && e.binary.length === 65536, { label: `morceau ${i}`, timeout: 10000 });
+    }
+    const duree = Date.now() - t0;
+    assert(duree >= 2000, `256 Kio à 64 Kio/s en ${duree} ms : le débit n’est pas bridé`);
+    await a.close(); await b.close();
+  });
+});
+
+test('X-Forwarded-For n’est cru que d’un proxy local', async () => {
+  const lan = Object.values(os.networkInterfaces()).flat().find((x) => x && x.family === 'IPv4' && !x.internal)?.address;
+  if (!lan) { console.log('       (sauté : aucune adresse IPv4 de réseau local)'); return; }
+  const a = await connect(PORT, 'alice'); await joinRoom(a, 'proxy', {});
+  // Connexion directe (pas depuis la machine en boucle locale) : l'en-tête est ignoré.
+  const b = new TestClient(`ws://${lan}:${PORT}`, 'menteur', depuis('198.51.100.66'));
+  await b.open(); await b.waitForType('hello');
+  await joinRoom(b, 'proxy', {});
+  const presence = await a.waitForType('presence', (m) => m.action === 'join');
+  assertEqual(presence.ip, lan, 'adresse constatée, pas celle de l’en-tête');
+  await a.close(); await b.close();
 });
 
 (async () => {
