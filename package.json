@@ -49,10 +49,17 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "AppImage",
+        "deb"
       ],
       "icon": "assets/icon.png",
-      "category": "Utility"
+      "category": "Utility",
+      "maintainer": "Lumonui <Lumonui@users.noreply.github.com>",
+      "synopsis": "Castunn",
+      "description": "Castunn"
+    },
+    "deb": {
+      "artifactName": "${productName}-${version}-amd64.${ext}"
     },
     "extraResources": [
       {

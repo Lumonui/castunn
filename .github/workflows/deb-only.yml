@@ -1,0 +1,43 @@
+name: Ajouter le .deb à une release existante
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag de la release (ex : v1.2.5)"
+        required: true
+        default: "v1.2.5"
+
+permissions:
+  contents: write
+
+jobs:
+  deb:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - run: npm install
+
+      # Construit uniquement le .deb, sans rien publier.
+      # Les options -c.* complètent la config du package.json du tag,
+      # qui ne contient pas encore les réglages nécessaires au .deb.
+      - name: Build du .deb
+        run: >
+          npx electron-builder --linux deb --publish never
+          -c.linux.maintainer="Lumonui <Lumonui@users.noreply.github.com>"
+          -c.linux.synopsis="Castunn"
+          -c.linux.description="Castunn"
+          -c.deb.artifactName='${productName}-${version}-amd64.${ext}'
+
+      # Ajoute seulement le .deb à la release, sans toucher aux autres fichiers.
+      - name: Envoi dans la release
+        run: gh release upload "${{ inputs.tag }}" dist/*.deb --clobber
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
