@@ -348,7 +348,7 @@ function creerOuverturePorts() {
     fichierReglages: path.join(dossier, 'castunn-settings.json'),
     trouverPasserelle: neutralise
       ? async () => { throw new Error('désactivé par CASTUNN_SANS_UPNP'); }
-      : () => trouverPasserelle(),
+      : (o) => trouverPasserelle(o),
     adresseLocaleVers,
     // Une seule instance par machine parle au routeur : celle du profil de base
     // (voir port-forwarding.js).

@@ -68,8 +68,15 @@ function lireReponseSsdp(texte) {
   return { location: entetes.location, st: entetes.st || '', server: entetes.server || '' };
 }
 
-/** Diffuse les requêtes M-SEARCH et collecte les adresses de description. */
-function chercherPasserellesUpnp({ delai = 3000 } = {}) {
+/**
+ * Diffuse les requêtes M-SEARCH et collecte les adresses de description.
+ * `surLocation` reçoit chaque nouvelle adresse dès sa réponse ; `signal` met
+ * fin à l'écoute (et au second envoi) quand l'appelant a ce qu'il lui faut.
+ * `cible` ne sert qu'aux tests (faux répondeur en unicast).
+ */
+function chercherPasserellesUpnp({
+  delai = 3000, surLocation, signal, cible = { adresse: SSDP_ADRESSE, port: SSDP_PORT }
+} = {}) {
   return new Promise((resolve) => {
     const trouvees = new Set();
     let socket;
@@ -80,16 +87,22 @@ function chercherPasserellesUpnp({ delai = 3000 } = {}) {
       return;
     }
     let fini = false;
+    let minuteur = null;
     const finir = () => {
       if (fini) return;
       fini = true;
+      clearTimeout(minuteur);
+      signal?.removeEventListener('abort', finir);
       try { socket.close(); } catch {}
       resolve([...trouvees]);
     };
+    signal?.addEventListener('abort', finir);
 
     socket.on('message', (msg) => {
       const r = lireReponseSsdp(msg.toString());
-      if (r) trouvees.add(r.location);
+      if (!r || trouvees.has(r.location)) return;
+      trouvees.add(r.location);
+      surLocation?.(r.location);
     });
     socket.on('error', finir);
     const envoyer = () => {
@@ -103,16 +116,16 @@ function chercherPasserellesUpnp({ delai = 3000 } = {}) {
           `ST: ${st}`,
           '', ''
         ].join('\r\n');
-        socket.send(requete, SSDP_PORT, SSDP_ADRESSE, () => {});
+        socket.send(requete, cible.port, cible.adresse, () => {});
       }
     };
-    // Envoyée deux fois : c'est de l'UDP, et une vraie box reste muette
-    // quelques instants juste après la suppression de redirections (constaté).
+    // Envoyée deux fois : c'est de l'UDP. Le second envoi n'a pas lieu si une
+    // passerelle a déjà répondu (signal).
     socket.bind(0, () => {
       envoyer();
       setTimeout(envoyer, Math.min(1000, delai / 3));
     });
-    setTimeout(finir, delai);
+    minuteur = setTimeout(finir, delai);
   });
 }
 
@@ -297,18 +310,58 @@ class PasserelleUpnp {
   }
 }
 
-/** Première passerelle UPnP qui expose un service de connexion WAN exploitable. */
-async function trouverPasserelleUpnp({ delai = 3000, locations } = {}) {
-  const adresses = locations || await chercherPasserellesUpnp({ delai });
-  for (const location of adresses) {
-    try {
-      const { statut, corps } = await requeteHttp(location, { delai: 3000 });
-      if (statut !== 200) continue;
-      const services = lireDescriptionIgd(corps, location);
-      if (services.length) return new PasserelleUpnp({ location, ...services[0] });
-    } catch { /* équipement suivant */ }
+/** Passerelle décrite à cette adresse, si elle expose un service WAN exploitable. */
+async function examinerDescription(location, { delai = 3000 } = {}) {
+  try {
+    const { statut, corps } = await requeteHttp(location, { delai });
+    if (statut !== 200) return null;
+    const services = lireDescriptionIgd(corps, location);
+    return services.length ? new PasserelleUpnp({ location, ...services[0] }) : null;
+  } catch {
+    return null;
   }
-  return null;
+}
+
+/**
+ * Première passerelle UPnP qui expose un service de connexion WAN exploitable.
+ * Avec `locations` : ces adresses-là, dans l'ordre. Sinon, découverte SSDP :
+ * chaque équipement est examiné dès sa réponse, et l'écoute cesse au premier
+ * qui convient — une box répond en quelques millisecondes (mesuré), inutile
+ * d'attendre la fin du délai.
+ */
+async function trouverPasserelleUpnp({ delai = 3000, locations, delaiDescription = 3000, cible } = {}) {
+  if (locations) {
+    for (const location of locations) {
+      const p = await examinerDescription(location, { delai: delaiDescription });
+      if (p) return p;
+    }
+    return null;
+  }
+  return new Promise((resolve) => {
+    const arret = new AbortController();
+    let enCours = 0;
+    let ecouteFinie = false;
+    let rendue = false;
+    const rendre = (p) => {
+      if (rendue) return;
+      rendue = true;
+      arret.abort();
+      resolve(p);
+    };
+    const rienTrouve = () => { if (ecouteFinie && enCours === 0) rendre(null); };
+    chercherPasserellesUpnp({
+      delai,
+      cible,
+      signal: arret.signal,
+      surLocation: (location) => {
+        enCours++;
+        examinerDescription(location, { delai: delaiDescription }).then((p) => {
+          enCours--;
+          if (p) rendre(p); else rienTrouve();
+        });
+      }
+    }).then(() => { ecouteFinie = true; rienTrouve(); });
+  });
 }
 
 /* ------------------------------------------------------------------------ */
@@ -491,9 +544,20 @@ function adresseLocaleVers(hote) {
 /**
  * Passerelle exploitable : UPnP d'abord (elle seule sait lister et décrire
  * les redirections), NAT-PMP ensuite. null si le routeur ne coopère pas.
+ *
+ * `memorisee` : adresse de description de la dernière passerelle trouvée,
+ * essayée avant toute découverte. Une Livebox cesse de répondre en SSDP (de
+ * 5 s à plus de 40 s) après TOUT changement de ses redirections — les nôtres à la fermeture,
+ * celles du décodeur TV ou d'une autre machine — alors que sa description et
+ * son service de contrôle, eux, répondent toujours (mesuré). Si l'adresse ne
+ * répond plus (box redémarrée, autre réseau), la découverte prend le relais.
  */
-async function trouverPasserelle({ delai = 3000 } = {}) {
-  const upnp = await trouverPasserelleUpnp({ delai });
+async function trouverPasserelle({ delai = 3000, memorisee, cible } = {}) {
+  if (memorisee) {
+    const connue = await trouverPasserelleUpnp({ locations: [memorisee], delaiDescription: 1500 });
+    if (connue) return connue;
+  }
+  const upnp = await trouverPasserelleUpnp({ delai, cible });
   if (upnp) return upnp;
   const hote = await passerelleParDefaut();
   if (!hote) return null;

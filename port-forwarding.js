@@ -46,9 +46,10 @@ const AGRANDIR_SOUS = 2;
 // dessous : l'écart avec le seuil d'agrandissement évite les allers-retours.
 const REDUIRE_DES = 6;
 // Aucun routeur n'a répondu : on réessaie, de plus en plus espacé. Une vraie
-// box reste muette quelques instants juste après la suppression de
-// redirections (constaté) : un relancement rapide de Castunn tombait dans ce
-// trou et restait « indisponible » jusqu'au lancement suivant.
+// box se tait en SSDP quelques secondes après tout changement de ses
+// redirections (mesuré : de 5 s à plus de 40 s) : un relancement rapide de Castunn tombait
+// dans ce trou. La passerelle mémorisée (réglage `passerelle`) l'évite
+// désormais ; les réessais restent pour la première découverte.
 const REESSAIS_MS = [5000, 15000, 30000, 60000];
 const REESSAI_LONG_MS = 5 * 60 * 1000;
 
@@ -210,7 +211,7 @@ class OuverturePorts extends EventEmitter {
    * @param {object} o
    * @param {{min:number,max:number}} o.plage        ports redirigeables (webrtc-ports.js)
    * @param {string} o.fichierReglages               JSON du profil
-   * @param {Function} o.trouverPasserelle           () => passerelle | null
+   * @param {Function} o.trouverPasserelle           ({ memorisee }) => passerelle | null
    * @param {Function} o.adresseLocaleVers           (hote) => adresse | null
    * @param {Function} [o.sonder]                    (adresse, ports) => ports occupés
    * @param {boolean} [o.delegue]                    instance secondaire : la première parle au routeur
@@ -244,7 +245,10 @@ class OuverturePorts extends EventEmitter {
     this.renouvellement = renouvellement;
 
     const r = lireReglages(this.fichier).ouverturePorts || {};
-    this.reglages = { actif: r.actif !== false, derniereAdresse: r.derniereAdresse || '', debutPlage: r.debutPlage };
+    this.reglages = {
+      actif: r.actif !== false, derniereAdresse: r.derniereAdresse || '', debutPlage: r.debutPlage,
+      passerelle: r.passerelle || ''
+    };
 
     this.passerelle = null;
     this.client = '';
@@ -418,8 +422,13 @@ class OuverturePorts extends EventEmitter {
     const perime = () => generation !== this.generation;
     if (!silencieux) this._publier({ statut: 'en-cours' });
 
-    const passerelle = await this.trouverPasserelle();
+    const passerelle = await this.trouverPasserelle({ memorisee: this.reglages.passerelle });
     if (perime()) return;
+    // Retenue pour le cycle ou le lancement suivant, qui l'essaiera avant SSDP.
+    if (passerelle?.location && this.reglages.passerelle !== passerelle.location) {
+      this.reglages.passerelle = passerelle.location;
+      this._sauverReglages();
+    }
     if (!passerelle) {
       this._publier({ statut: 'indisponible', raison: 'aucun routeur UPnP ni NAT-PMP n’a répondu' });
       this._reessayer();

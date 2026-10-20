@@ -204,6 +204,32 @@ function routeurPmp({ decaler = [] } = {}) {
 }
 
 /* ------------------------------------------------------------------------ */
+/* Faux répondeur SSDP : en unicast sur 127.0.0.1, jamais sur le vrai réseau */
+/* ------------------------------------------------------------------------ */
+
+function repondeurSsdp(locations) {
+  const socket = dgram.createSocket('udp4');
+  const recues = [];
+  socket.on('message', (msg, rinfo) => {
+    recues.push(String(msg));
+    for (const location of locations) {
+      socket.send(`HTTP/1.1 200 OK\r\nLOCATION: ${location}\r\n`
+        + 'ST: urn:schemas-upnp-org:device:InternetGatewayDevice:1\r\n\r\n', rinfo.port, rinfo.address);
+    }
+  });
+  return new Promise((resolve) => {
+    socket.bind(0, '127.0.0.1', () => resolve({
+      cible: { adresse: '127.0.0.1', port: socket.address().port },
+      recues,
+      fermer: () => new Promise((r) => socket.close(r))
+    }));
+  });
+}
+
+// Adresse où rien n'écoute : connexion refusée aussitôt.
+const NULLE_PART = 'http://127.0.0.1:1/gatedesc.xml';
+
+/* ------------------------------------------------------------------------ */
 /* Fabrique d'orchestrateur branché sur un faux routeur                       */
 /* ------------------------------------------------------------------------ */
 
@@ -675,6 +701,83 @@ function orchestrateur(routeur, { fichier = dossierReglages(), machine = { occup
       eq((await o.definirActif(false)).statut, 'delegue');
       eq(r.journal.length, 0, 'aucune requête');
     } finally { await o.arreter(); await r.fermer(); }
+  });
+
+  /* ------------------------- découverte de la passerelle ------------------ */
+
+  await test('découverte : la première passerelle valable met fin à l’écoute, sans second envoi', async () => {
+    const r = await routeurUpnp();
+    const s = await repondeurSsdp([r.location]);
+    try {
+      const t0 = Date.now();
+      const p = await nat.trouverPasserelleUpnp({ delai: 3000, cible: s.cible });
+      const duree = Date.now() - t0;
+      ok(p && p.controle.endsWith('/fa1a0a5d/upnp/control/WANIPConn1'), 'passerelle trouvée');
+      ok(duree < 500, `rendue en ${duree} ms, pas au bout des 3 s`);
+      await pause(1200);
+      eq(s.recues.length, 5, 'un seul envoi des 5 requêtes');
+    } finally { await s.fermer(); await r.fermer(); }
+  });
+
+  await test('découverte : un équipement sans service exploitable ne l’arrête pas', async () => {
+    const r = await routeurUpnp();
+    const s = await repondeurSsdp([NULLE_PART, r.location]);
+    try {
+      const p = await nat.trouverPasserelleUpnp({ delai: 3000, cible: s.cible });
+      ok(p && p.location === r.location, 'la vraie passerelle est retenue');
+    } finally { await s.fermer(); await r.fermer(); }
+  });
+
+  await test('découverte : rien de valable, null au bout du délai', async () => {
+    const s = await repondeurSsdp([NULLE_PART]);
+    try {
+      const t0 = Date.now();
+      eq(await nat.trouverPasserelleUpnp({ delai: 300, cible: s.cible }), null);
+      ok(Date.now() - t0 >= 290, 'le délai est attendu en entier');
+    } finally { await s.fermer(); }
+  });
+
+  await test('passerelle mémorisée : employée sans aucune requête SSDP', async () => {
+    const r = await routeurUpnp();
+    const s = await repondeurSsdp([r.location]);
+    try {
+      const p = await nat.trouverPasserelle({ memorisee: r.location, cible: s.cible });
+      ok(p && p.location === r.location, 'passerelle trouvée');
+      eq(s.recues.length, 0, 'SSDP jamais interrogé');
+    } finally { await s.fermer(); await r.fermer(); }
+  });
+
+  await test('passerelle mémorisée qui ne répond plus : la découverte prend le relais', async () => {
+    const r = await routeurUpnp();
+    const s = await repondeurSsdp([r.location]);
+    try {
+      const p = await nat.trouverPasserelle({ memorisee: NULLE_PART, cible: s.cible });
+      ok(p && p.location === r.location, 'trouvée par SSDP');
+      ok(s.recues.length > 0, 'SSDP interrogé');
+    } finally { await s.fermer(); await r.fermer(); }
+  });
+
+  await test('la passerelle trouvée est retenue, et proposée au lancement suivant', async () => {
+    const r = await routeurUpnp();
+    const fichier = dossierReglages();
+    const demandes = [];
+    const fabrique = () => orchestrateur(r, {
+      fichier,
+      trouverPasserelle: async ({ memorisee }) => {
+        demandes.push(memorisee);
+        return nat.trouverPasserelleUpnp({ locations: [r.location] });
+      }
+    });
+    try {
+      const a = fabrique();
+      eq((await a.demarrer()).statut, 'ouvert');
+      await a.arreter();
+      const b = fabrique();
+      eq((await b.demarrer()).statut, 'ouvert');
+      await b.arreter();
+      eq(demandes, ['', r.location]);
+      eq(JSON.parse(fs.readFileSync(fichier, 'utf8')).ouverturePorts.passerelle, r.location);
+    } finally { await r.fermer(); }
   });
 
   /* ------------------------- fenêtres qui grandissent --------------------- */
