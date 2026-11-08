@@ -662,8 +662,29 @@ strong {
   background: var(--console-bg);
   display: grid;
   gap: 6px;
+  position: relative;
 }
-.tuile figcaption { font-size: 12px; color: var(--fg-muted); }
+.tuile figcaption { font-size: 12px; color: var(--fg-muted); padding-right: 24px; }
+/* Le × d'une vignette : discret, en haut à droite, comme un bouton de fenêtre. */
+.tuile .tuile-fermer {
+  position: absolute;
+  top: 4px;
+  right: 6px;
+  width: 22px;
+  height: 22px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  box-shadow: none;
+  color: var(--fg-muted);
+  font-size: 18px;
+  line-height: 22px;
+  text-transform: none;
+  cursor: pointer;
+}
+.tuile .tuile-fermer:hover { background: rgba(255,255,255,.08); color: var(--fg); }
 .tuile audio, .tuile video { width: 100%; }
 .tuile-image {
   max-width: 100%;

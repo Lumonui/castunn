@@ -90,9 +90,11 @@ async function ouvrirMeneur(nom) {
   throw new Error('aucun identifiant assez grand en 20 essais');
 }
 
+// Le type se déduit de l'extension de l'URL (champ unique) : `type` ne sert
+// qu'à la lecture des appels.
 async function envoyerUrl(p, type, url) {
-  await js(p, `document.getElementById('${type}Url').value = ${JSON.stringify(url)};
-    document.getElementById('btnSend${type[0].toUpperCase() + type.slice(1)}Url').click(); true`);
+  await js(p, `document.getElementById('mediaUrl').value = ${JSON.stringify(url)};
+    document.getElementById('btnSendMediaUrl').click(); true`);
 }
 const compter = (texte, motif) => (texte.match(motif) || []).length;
 

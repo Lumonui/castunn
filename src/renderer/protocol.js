@@ -94,6 +94,32 @@ export function guessMimeByExt(name) {
   return 'application/octet-stream';
 }
 
+const EXT_URL = {
+  audio: ['mp3', 'm4a', 'aac', 'ogg', 'oga', 'opus', 'wav', 'flac', 'weba'],
+  video: ['mp4', 'm4v', 'webm', 'mov', 'mkv', 'ogv'],
+  image: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'avif', 'bmp', 'svg', 'ico']
+};
+
+/**
+ * Type d'un média désigné par une URL : 'audio', 'video', 'image', ou ''
+ * quand ni le schéma data: ni l'extension du chemin ne le disent (la page
+ * sonde alors le média lui-même). La requête et l'ancre sont ignorées.
+ */
+export function typeDepuisUrl(url) {
+  const s = String(url || '').trim();
+  const data = /^data:(audio|video|image)\//i.exec(s);
+  if (data) return data[1].toLowerCase();
+  let chemin = s;
+  try { chemin = new URL(s).pathname; } catch { chemin = s.split(/[?#]/)[0]; }
+  const dernier = chemin.split('/').pop() || '';
+  if (!dernier.includes('.')) return '';
+  const ext = dernier.split('.').pop().toLowerCase();
+  for (const [type, exts] of Object.entries(EXT_URL)) {
+    if (exts.includes(ext)) return type;
+  }
+  return '';
+}
+
 /**
  * Décide de ce qu'on fait d'un média reçu : le lire ou le télécharger.
  *

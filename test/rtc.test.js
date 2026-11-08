@@ -172,8 +172,8 @@ app.whenReady().then(async () => {
   await check('une URL envoyee emprunte le canal P2P, pas le WebSocket', async () => {
     await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
     await a.webContents.executeJavaScript(`
-      document.getElementById('audioUrl').value = 'https://example.invalid/t.mp3';
-      document.getElementById('btnSendAudioUrl').click(); true`);
+      document.getElementById('mediaUrl').value = 'https://example.invalid/t.mp3';
+      document.getElementById('btnSendMediaUrl').click(); true`);
 
     const log = await waitUntil(
       async () => { const t = await texteConsole(a); return t.includes('a reçu l\'audio') ? t : null; },

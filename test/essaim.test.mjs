@@ -424,6 +424,28 @@ test('une fois complet, le lecteur est servi depuis le fichier, même l’essaim
   eq([...new Uint8Array(octets)], [...new Uint8Array(await f.slice(3 * TAILLE_PIECE + 10, 3 * TAILLE_PIECE + 20).arrayBuffer())]);
 });
 
+// Constaté : un petit fichier lu pendant son téléchargement. Le lecteur
+// demande lui-même la fin (et le reste), le récepteur a tout avant que la
+// poussée n'y arrive ; la source cessait de pousser (plus personne à servir)
+// avec une frontière incomplète, et l'émetteur affichait « Envoi annulé ».
+test('le lecteur a tout demandé avant la fin de la poussée : l’envoi est réussi, pas annulé', async () => {
+  const r = reseau({ debit: 2 * 1024 });
+  const a = r.noeud('a'), b = r.noeud('b');
+  r.relier('a', 'b');
+  const f = fichier(60 * TAILLE_PIECE);
+  const t = a.essaim.partager(f, meta, ['b']);
+  const lecture = createFluxLecture({ essaim: b.essaim });
+  lecture.ouvrir(t.num, { taille: f.size, mime: 'video/mp4', taillePiece: TAILLE_PIECE });
+  await attendre(() => b.essaim.transfert(t.num), 3000, 'annonce reçue');
+  // De la fin vers le début, comme un lecteur qui va chercher un index.
+  for (let k = 59; k >= 0 && !b.complets.length; k -= 8) await lecture.octets(t.num, k * TAILLE_PIECE);
+  await attendre(() => b.complets.length, 10000, 'complet');
+  const pousseeAuComplet = t.frontiere;
+  eq(await t.termine, true, `poussée réussie (frontière ${t.frontiere}/${t.n}, ${pousseeAuComplet} au complet)`);
+  eq(t.frontiere, t.n, 'frontière au bout : la page conclut « Envoi terminé »');
+  ok(await memesOctets(b.complets[0].blob, f), 'octets identiques');
+});
+
 test('transfert abandonné pendant la lecture : le lecteur reçoit « fin », sans rester suspendu', async () => {
   const { a, b, t, lecture } = lectureLente();
   await attendre(() => b.essaim.transfert(t.num), 3000, 'annonce reçue');

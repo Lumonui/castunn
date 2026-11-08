@@ -35,22 +35,10 @@
     <section id="emitter" class="card hidden">
       <h2>Emetteur</h2>
       <div>
-        <label for="audioUrl">URL audio</label>
+        <label for="mediaUrl">URL (audio/vidéo/image)</label>
         <div class="row">
-          <input type="url" id="audioUrl" placeholder="https://.../fichier.mp3" />
-          <button id="btnSendAudioUrl">Envoyer URL audio</button>
-        </div>
-
-        <label for="videoUrl">URL vidéo</label>
-        <div class="row">
-          <input type="url" id="videoUrl" placeholder="https://.../fichier.mp4" />
-          <button id="btnSendVideoUrl">Envoyer URL vidéo</button>
-        </div>
-
-        <label for="imageUrl">URL image</label>
-        <div class="row">
-          <input type="url" id="imageUrl" placeholder="https://.../image.jpg" />
-          <button id="btnSendImageUrl">Envoyer URL image</button>
+          <input type="url" id="mediaUrl" placeholder="https://.../fichier.mp4" />
+          <button id="btnSendMediaUrl">Envoyer URL</button>
         </div>
 
         <label for="mediaFile">Fichier (audio/vidéo/image/...)</label>
@@ -204,7 +192,7 @@
 
   <script type="module">
   import {
-    cleanPeerIp, formatSelfName, guessMimeByExt, pickRenderTarget
+    cleanPeerIp, formatSelfName, guessMimeByExt, pickRenderTarget, typeDepuisUrl
   } from './src/renderer/protocol.js';
   import { createFluxLecture, lirePlage, entetesReponse } from './src/renderer/flux-lecture.js';
   import { createMediaReceiver } from './src/renderer/media-receiver.js';
@@ -1298,15 +1286,11 @@ function showLocalImage(url){
 
 
   /* === Emetteur : envois === */
-  const btnSendAudioUrl = document.getElementById('btnSendAudioUrl');
-  const btnSendVideoUrl = document.getElementById('btnSendVideoUrl');
-  const btnSendImageUrl = document.getElementById('btnSendImageUrl');
+  const btnSendMediaUrl = document.getElementById('btnSendMediaUrl');
   const btnSendMediaFile = document.getElementById('btnSendMediaFile');
   const btnStop = document.getElementById('btnStop');
   const btnPing = document.getElementById('btnPing');
-  const audioUrl = document.getElementById('audioUrl');
-  const videoUrl = document.getElementById('videoUrl');
-  const imageUrl = document.getElementById('imageUrl');
+  const mediaUrl = document.getElementById('mediaUrl');
   const mediaFile = document.getElementById('mediaFile');
   const progressBar = document.getElementById('uploadProgress');
   const progressText = document.getElementById('progressText');
@@ -1438,25 +1422,58 @@ function showLocalImage(url){
     socket.send(JSON.stringify(obj)); return true;
   }
 
-  btnSendAudioUrl.onclick = () => {
-    const url = audioUrl.value.trim();
-    if (!url) return;
-    iAmEmitter = true;
-    if (sendApp({ type:'audio', url })) { ctrlError.textContent=''; showLocalAudio(url); }
+  /* --- Un seul champ d'URL ---------------------------------------------------
+   * Le type vient de l'extension (typeDepuisUrl). Sans extension parlante, on
+   * sonde le média : un lecteur vidéo dit s'il a une image (vidéo) ou non
+   * (audio) ; s'il ne sait pas le lire, on essaie comme image. Ni l'un ni
+   * l'autre n'exige CORS. Le message envoyé reste typé : rien ne change chez
+   * le récepteur.
+   * --------------------------------------------------------------------- */
+  function sonderUrl(url, delai = 10000) {
+    return new Promise((resolve) => {
+      const v = document.createElement('video');
+      let fini = false;
+      const finir = (type) => {
+        if (fini) return;
+        fini = true;
+        clearTimeout(minuterie);
+        v.removeAttribute('src');
+        try { v.load(); } catch {}
+        resolve(type);
+      };
+      const minuterie = setTimeout(() => finir(''), delai);
+      v.muted = true;
+      v.preload = 'metadata';
+      v.onloadedmetadata = () => finir(v.videoWidth > 0 ? 'video' : 'audio');
+      v.onerror = () => {
+        if (fini) return;
+        const img = new Image();
+        img.onload = () => finir('image');
+        img.onerror = () => finir('');
+        img.src = url;
+      };
+      v.src = url;
+    });
+  }
+
+  const AFFICHER_LOCAL = {
+    audio: (url) => showLocalAudio(url),
+    video: (url) => showLocalVideo(url),
+    image: (url) => showLocalImage(url)
   };
 
-  btnSendVideoUrl.onclick = () => {
-    const url = videoUrl.value.trim();
+  btnSendMediaUrl.onclick = async () => {
+    const url = mediaUrl.value.trim();
     if (!url) return;
+    let type = typeDepuisUrl(url);
+    if (!type) {
+      btnSendMediaUrl.disabled = true;
+      ctrlError.textContent = '';
+      try { type = await sonderUrl(url); } finally { btnSendMediaUrl.disabled = false; }
+    }
+    if (!type) { ctrlError.textContent = 'Média illisible à cette URL (ni audio, ni vidéo, ni image).'; return; }
     iAmEmitter = true;
-    if (sendApp({ type:'video', url })) { ctrlError.textContent=''; showLocalVideo(url); }
-  };
-
-  btnSendImageUrl.onclick = () => {
-    const url = imageUrl.value.trim();
-    if (!url) return;
-    iAmEmitter = true;
-    if (sendApp({ type:'image', url })) { ctrlError.textContent=''; showLocalImage(url); }
+    if (sendApp({ type, url })) { ctrlError.textContent=''; AFFICHER_LOCAL[type](url); }
   };
   
   const btnShareScreen = document.getElementById('btnShareScreen');
@@ -1821,7 +1838,15 @@ function showLocalImage(url){
     estElectron: isElectron(),
     telecharger: (url, nom) => downloadUrl(url, nom),
     log: (text) => addConsole(text),
-    erreur: (text) => { recvError.textContent = text; }
+    erreur: (text) => { recvError.textContent = text; },
+    // Le × d'une vignette : comme un stop de cet émetteur, mais chez nous
+    // seulement (son transfert en cours compris), sans rien lui dire.
+    surFermer: (de) => {
+      for (const r of recepteursDe(de)) r.discard();
+      essaim.oublierSource(de);
+      tuiles.arreter(de);
+      libererSource(de);
+    }
   });
 
   /**

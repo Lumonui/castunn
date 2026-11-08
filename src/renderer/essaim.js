@@ -313,7 +313,14 @@ export function createEssaim(deps = {}) {
   async function pousser(t) {
     while (t.frontiere < t.n && !t.annule) {
       const { id, aucun } = choisirCible(t);
-      if (aucun) break;                       // plus personne à servir
+      if (aucun) {                            // plus personne à servir
+        // Les membres restés ont déjà tout (morceaux demandés par leur
+        // lecteur, plus vite que la poussée) : rien n'est annulé, la poussée
+        // est simplement inutile au-delà. Sans ça, l'émetteur affichait
+        // « Envoi annulé » alors que le récepteur avait le fichier.
+        if ([...t.membres].some((m) => t.complets.has(m))) t.frontiere = t.n;
+        break;
+      }
       if (!id) {                              // tous occupés : on attend qu'un canal se vide
         await new Promise((r) => { attentes.add(r); setTimeout(r, 50); });
         continue;

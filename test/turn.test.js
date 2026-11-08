@@ -227,8 +227,8 @@ app.whenReady().then(async () => {
     await check('les données transitent par le relais (canal P2P, pas le WebSocket)', async () => {
       await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
       await a.webContents.executeJavaScript(`
-        document.getElementById('audioUrl').value = 'https://example.invalid/relais.mp3';
-        document.getElementById('btnSendAudioUrl').click(); true`);
+        document.getElementById('mediaUrl').value = 'https://example.invalid/relais.mp3';
+        document.getElementById('btnSendMediaUrl').click(); true`);
       const log = await waitUntil(async () => {
         const t = await consoleDe(a); return t.includes('a reçu l\'audio') ? t : null;
       }, { label: 'accusé de réception' });
@@ -247,8 +247,8 @@ app.whenReady().then(async () => {
         { label: 'pair présent' });
       await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
       await a.webContents.executeJavaScript(`
-        document.getElementById('audioUrl').value = 'https://example.invalid/ws.mp3';
-        document.getElementById('btnSendAudioUrl').click(); true`);
+        document.getElementById('mediaUrl').value = 'https://example.invalid/ws.mp3';
+        document.getElementById('btnSendMediaUrl').click(); true`);
       const log = await waitUntil(async () => {
         const t = await consoleDe(a); return t.includes('a reçu l\'audio') ? t : null;
       }, { label: 'accusé de réception' });

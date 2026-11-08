@@ -2,7 +2,7 @@
 // Tests unitaires des modules du renderer (aucun DOM requis).
 //   npm run test:unit
 
-import { cleanPeerIp, formatPeerLabel, formatSelfName, pickRenderTarget, guessMimeByExt,
+import { cleanPeerIp, formatPeerLabel, formatSelfName, pickRenderTarget, guessMimeByExt, typeDepuisUrl,
          isIPv4, peerAddresses, formatPeerDetail, formatPeerAltAddress }
   from '../src/renderer/protocol.js';
 import { createMediaReceiver } from '../src/renderer/media-receiver.js';
@@ -126,6 +126,17 @@ test('guessMimeByExt reconnaît les extensions vidéo courantes', () => {
   eq(guessMimeByExt('FILM.MKV'), 'video/x-matroska');
   eq(guessMimeByExt('note.txt'), 'application/octet-stream');
   eq(guessMimeByExt(''), 'application/octet-stream');
+});
+
+test('typeDepuisUrl déduit audio, vidéo ou image d’une URL', () => {
+  eq(typeDepuisUrl('https://x.fr/son.MP3'), 'audio');
+  eq(typeDepuisUrl('https://x.fr/a/film.mp4?t=12#debut'), 'video');
+  eq(typeDepuisUrl('https://x.fr/photo.jpeg'), 'image');
+  eq(typeDepuisUrl('data:image/png;base64,AAAA'), 'image');
+  eq(typeDepuisUrl('https://x.fr/flux'), '');
+  eq(typeDepuisUrl('https://x.fr.example/page.html'), '');
+  eq(typeDepuisUrl('https://x.fr.example/'), '');
+  eq(typeDepuisUrl(''), '');
 });
 
 /* ---------------------------- pickRenderTarget --------------------------- */

@@ -24,7 +24,10 @@ export function createReceptionTiles({
   estElectron = false,
   telecharger = () => {},
   log = () => {},
-  erreur = () => {}
+  erreur = () => {},
+  // Le × d'une vignette : la page libère ce que cet émetteur montrait. Par
+  // défaut, la vignette est simplement retirée.
+  surFermer = null
 } = {}) {
   const tuiles = new Map(); // émetteur -> { fig, titre, audio, video, image }
 
@@ -55,7 +58,16 @@ export function createReceptionTiles({
     image.className = 'tuile-image';
     image.alt = 'Image reçue';
     image.hidden = true;
-    fig.append(titre, audio, video, image);
+    // Fermer une seule vignette (celle d'un émetteur parti, par exemple),
+    // sans toucher aux autres.
+    const fermer = doc.createElement('button');
+    fermer.type = 'button';
+    fermer.className = 'tuile-fermer';
+    fermer.textContent = '×';
+    fermer.title = 'Fermer cette vignette';
+    fermer.setAttribute('aria-label', 'Fermer cette vignette');
+    fermer.addEventListener('click', () => (surFermer ? surFermer(de) : arreter(de)));
+    fig.append(titre, fermer, audio, video, image);
     conteneur.append(fig);
     const t = { de, fig, titre, audio, video, image };
     tuiles.set(de, t);

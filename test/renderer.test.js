@@ -244,6 +244,58 @@ app.whenReady().then(async () => {
     if (after !== before) throw new Error('le fichier a été affiché alors qu\'il devait être téléchargé');
   });
 
+  await check('le × d’une vignette la ferme, sans rien dire à l’émetteur', async () => {
+    muteMessages.length = 0;
+    const avant = await win.webContents.executeJavaScript('document.querySelectorAll("#receptions .tuile").length');
+    if (avant < 1) throw new Error('aucune vignette à fermer');
+    await win.webContents.executeJavaScript('document.querySelector("#receptions .tuile .tuile-fermer").click(); true');
+    const apres = await win.webContents.executeJavaScript('document.querySelectorAll("#receptions .tuile").length');
+    if (apres !== avant - 1) throw new Error(`${avant} vignette(s) avant, ${apres} après`);
+    const titre = await win.webContents.executeJavaScript('document.querySelector("#receptions .tuile figcaption")?.textContent || ""');
+    if (titre.includes('×')) throw new Error('le × est entré dans le titre');
+    await sleep(300);
+    if (muteMessages.some((m) => m.type === 'confirmation')) throw new Error('un accusé est parti chez l’émetteur');
+  });
+
+  // Un seul champ d'URL : sans extension parlante, la page sonde le média.
+  await check('le champ URL unique devine vidéo, image ou refus, même sans extension', async () => {
+    const fs = require('fs');
+    const os = require('os');
+    const { pathToFileURL } = require('url');
+    const dossier = fs.mkdtempSync(path.join(os.tmpdir(), 'castunn-url-'));
+    const video = path.join(dossier, 'video');
+    const image = path.join(dossier, 'image');
+    const texte = path.join(dossier, 'texte');
+    fs.copyFileSync(path.join(__dirname, 'fixtures', 'index-en-fin.mp4'), video);
+    fs.writeFileSync(image, Buffer.from(
+      'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==',
+      'base64'));
+    fs.writeFileSync(texte, 'ceci n’est pas un média');
+
+    const envoyer = (fichier) => win.webContents.executeJavaScript(`
+      document.getElementById('mediaUrl').value = ${JSON.stringify(pathToFileURL(fichier).href)};
+      document.getElementById('btnSendMediaUrl').click(); true`);
+    const recu = (type) => waitUntil(
+      async () => muteMessages.find((m) => m.type === type && String(m.url || '').startsWith('file:')),
+      { label: `message ${type}` });
+
+    muteMessages.length = 0;
+    await envoyer(video);
+    await recu('video');
+    await envoyer(image);
+    await recu('image');
+    await envoyer(texte);
+    const erreur = await waitUntil(async () => {
+      const t = await win.webContents.executeJavaScript('document.getElementById("ctrlError").textContent');
+      return t.includes('illisible') ? t : null;
+    }, { label: 'refus d’un non-média', timeout: 12000 });
+    if (!erreur) throw new Error('aucun refus');
+    if (muteMessages.some((m) => ['audio', 'video', 'image'].includes(m.type) && m.url.endsWith('texte'))) {
+      throw new Error('un non-média a été envoyé');
+    }
+    fs.rmSync(dossier, { recursive: true, force: true });
+  });
+
   // Départ : l'identité connue doit être conservée dans le message.
   mute.close();
   await check('le départ est annoncé avec l\'identité connue', async () => {
