@@ -1,5 +1,6 @@
 const { app, BrowserWindow, desktopCapturer, session, ipcMain, dialog, protocol, webContents } = require('electron');
 const { declarerSchema, servirFlux } = require('./flux-protocole.js');
+const { autoriserLecteurYoutube } = require('./youtube-referer.js');
 const { fork, execFile } = require('child_process');
 const {
   WEBRTC_UDP_PORTS, etatPortsWebRTC, appliquerPlageWebRTC, plageChromium, debutValide
@@ -408,6 +409,9 @@ function createWindow() {
     webPreferences: {
       contextIsolation: true,
       nodeIntegration: false,
+      // Le récepteur est actif dès l'ouverture : un média reçu se lit avec
+      // son, sans attendre un premier clic dans la fenêtre.
+      autoplayPolicy: 'no-user-gesture-required',
       preload: path.join(__dirname, 'preload.js')
     }
   });
@@ -474,6 +478,10 @@ app.whenReady().then(() => {
     }
     return discoveryInFlight;
   });
+
+  // Liens YouTube envoyés : le lecteur de YouTube refuse une page file://
+  // qui ne dit pas qui l'intègre.
+  autoriserLecteurYoutube(session.defaultSession, require('./package.json').build?.appId);
 
   session.defaultSession.setDisplayMediaRequestHandler((request, callback) => {
     desktopCapturer.getSources({ types: ['screen'] }).then((sources) => {

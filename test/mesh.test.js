@@ -62,14 +62,13 @@ async function ouvrirPage(nom, query = {}) {
   const p = { nom, win };
   pages.push(p);
   await win.loadFile(path.join(PROJECT, 'castunn.html'), { query });
-  await win.webContents.executeJavaScript(`localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT}'); true`);
+  // Récepteur actif d'office : on efface un « ne pas recevoir » laissé par un scénario précédent.
+  await win.webContents.executeJavaScript(`localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT}'); localStorage.removeItem('castunn.sansReception'); true`);
   await win.webContents.reload();
   await new Promise((r) => win.webContents.once('did-finish-load', r));
   await win.webContents.executeJavaScript(`window.__nickname = ${JSON.stringify(nom)}; true`);
   await waitUntil(async () => (await js(p, 'document.getElementById("wsStatus").textContent')) === 'Connecté',
     { label: `${nom} connecté au serveur` });
-  // Récepteur activé, comme le ferait l'utilisateur.
-  await js(p, 'document.getElementById("btnActivate").click(); true');
   p.id = await js(p, `(document.getElementById('consoleLog').textContent.match(/myId=([a-z0-9]+)/) || [])[1]`);
   return p;
 }
@@ -308,7 +307,7 @@ app.whenReady().then(async () => {
     return !!(t && t.srcObject && t.srcObject.getTracks().length); })()`);
   await check('partage d’écran vers un récepteur désactivé : l’émetteur est prévenu « non lu »', async () => {
     await waitUntil(async () => (await pastille(s1)).texte === 'Connecté', { label: 'vera reliée', timeout: 20000 });
-    await js(s2, 'document.getElementById("btnDeactivate").click(); true');
+    await js(s2, `(() => { const c = document.getElementById('chkSansReception'); c.checked = true; c.dispatchEvent(new Event('change')); return true; })()`);
     await js(s1, CAPTURE);
     await js(s1, 'document.getElementById("btnShareScreen").click(); true');
     await waitUntil(async () => /flux écran en direct \(RTC\) mais Récepteur désactivé \(non lu\)/.test(await consoleDe(s1)),
@@ -345,7 +344,7 @@ app.whenReady().then(async () => {
   });
 
   await check('le direct s’arrête chez le récepteur dès que la capture cesse, même sans Stop', async () => {
-    await js(s2, 'document.getElementById("btnActivate").click(); true');
+    await js(s2, `(() => { const c = document.getElementById('chkSansReception'); c.checked = false; c.dispatchEvent(new Event('change')); return true; })()`);
     // Qualité « Natif » choisie dans les Paramètres : aucune limite demandée.
     await js(s1, `const q = document.getElementById('qualitePartage'); q.value = 'natif';
       q.dispatchEvent(new Event('change')); true`);

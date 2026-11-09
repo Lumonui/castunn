@@ -6,6 +6,7 @@ import { cleanPeerIp, formatPeerLabel, formatSelfName, pickRenderTarget, guessMi
          isIPv4, peerAddresses, formatPeerDetail, formatPeerAltAddress }
   from '../src/renderer/protocol.js';
 import { createMediaReceiver } from '../src/renderer/media-receiver.js';
+import { videoYoutube } from '../src/renderer/youtube.js';
 import { createPeerRegistry } from '../src/renderer/peers.js';
 import { etatPair, resumerMaillage } from '../src/renderer/mesh-status.js';
 import { buildWsUrl, resolveSignalUrl } from '../src/renderer/signal-url.js';
@@ -126,6 +127,23 @@ test('guessMimeByExt reconnaît les extensions vidéo courantes', () => {
   eq(guessMimeByExt('FILM.MKV'), 'video/x-matroska');
   eq(guessMimeByExt('note.txt'), 'application/octet-stream');
   eq(guessMimeByExt(''), 'application/octet-stream');
+});
+
+test('videoYoutube reconnaît les liens YouTube, et rien d’autre', () => {
+  const id = 'dQw4w9WgXcQ';
+  eq(videoYoutube(`https://www.youtube.com/watch?v=${id}`), { id, debut: 0 });
+  eq(videoYoutube(`https://youtu.be/${id}?t=90`), { id, debut: 90 });
+  eq(videoYoutube(`https://m.youtube.com/watch?v=${id}&t=1m30s`), { id, debut: 90 });
+  eq(videoYoutube(`https://www.youtube.com/shorts/${id}`), { id, debut: 0 });
+  eq(videoYoutube(`https://music.youtube.com/watch?v=${id}&list=RD`), { id, debut: 0 });
+  eq(videoYoutube(`https://www.youtube.com/embed/${id}?start=12`), { id, debut: 12 });
+  eq(videoYoutube(`https://www.youtube.com/live/${id}`), { id, debut: 0 });
+  eq(videoYoutube('https://www.youtube.com/watch?v=trop-court'), null, 'identifiant invalide');
+  eq(videoYoutube(`https://www.youtube.com/watch?v=${id}"><script>`), null, 'identifiant piégé');
+  eq(videoYoutube(`https://youtube.com.example/watch?v=${id}`), null, 'faux domaine');
+  eq(videoYoutube(`javascript:alert(1)//youtu.be/${id}`), null, 'autre schéma');
+  eq(videoYoutube('https://x.fr/film.mp4'), null);
+  eq(videoYoutube(''), null);
 });
 
 test('typeDepuisUrl déduit audio, vidéo ou image d’une URL', () => {

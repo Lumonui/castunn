@@ -225,7 +225,6 @@ app.whenReady().then(async () => {
     });
 
     await check('les données transitent par le relais (canal P2P, pas le WebSocket)', async () => {
-      await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
       await a.webContents.executeJavaScript(`
         document.getElementById('mediaUrl').value = 'https://example.invalid/relais.mp3';
         document.getElementById('btnSendMediaUrl').click(); true`);
@@ -245,7 +244,6 @@ app.whenReady().then(async () => {
     await check('avec rtc=off, une URL part par le WebSocket', async () => {
       await waitUntil(async () => (await a.webContents.executeJavaScript('document.getElementById("peersCount").textContent')) === '1',
         { label: 'pair présent' });
-      await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
       await a.webContents.executeJavaScript(`
         document.getElementById('mediaUrl').value = 'https://example.invalid/ws.mp3';
         document.getElementById('btnSendMediaUrl').click(); true`);

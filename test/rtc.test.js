@@ -170,7 +170,6 @@ app.whenReady().then(async () => {
   // Le vrai juge de paix : la donnee passe-t-elle en P2P ou par le serveur ?
   // Le recepteur annonce lui-meme le transport dans son accuse de reception.
   await check('une URL envoyee emprunte le canal P2P, pas le WebSocket', async () => {
-    await b.webContents.executeJavaScript('document.getElementById("btnActivate").click(); true');
     await a.webContents.executeJavaScript(`
       document.getElementById('mediaUrl').value = 'https://example.invalid/t.mp3';
       document.getElementById('btnSendMediaUrl').click(); true`);

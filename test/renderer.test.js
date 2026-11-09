@@ -95,7 +95,7 @@ app.whenReady().then(async () => {
   // c'est le chemin qu'emprunte l'application au démarrage suivant, quand elle
   // évite un balayage réseau complet.
   await win.webContents.executeJavaScript(
-    `localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT}'); true`
+    `localStorage.setItem('castunn.signalHost', '127.0.0.1:${PORT}'); localStorage.removeItem('castunn.sansReception'); true`
   );
   pageErrors.length = 0;
   await win.webContents.reload();
@@ -179,19 +179,17 @@ app.whenReady().then(async () => {
     try { muteMessages.push(JSON.parse(d.toString())); } catch {}
   });
 
-  // Le récepteur est volontairement désactivé au démarrage : on l'active comme
-  // le ferait l'utilisateur (et ça vérifie que les boutons répondent toujours
-  // après le passage du script en module ES).
-  await check('le bouton Activer rend le récepteur réceptif', async () => {
-    await win.webContents.executeJavaScript('document.getElementById("btnActivate").click()');
-    const status = await waitUntil(
-      async () => {
-        const t = await win.webContents.executeJavaScript('document.getElementById("activationStatus").textContent');
-        return t && t.toLowerCase().includes('activ') && !t.toLowerCase().includes('désactiv') ? t : null;
-      },
-      { label: 'récepteur activé' }
-    );
-    if (!status) throw new Error('statut : ' + status);
+  // Le récepteur est actif d'office ; « ne pas recevoir » est une case des
+  // Paramètres, retenue par le poste, qui s'applique aussitôt.
+  await check('récepteur actif d’office ; la case « Ne pas recevoir » le désactive, puis le rend', async () => {
+    const statut = () => win.webContents.executeJavaScript('document.getElementById("activationStatus").textContent');
+    if ((await statut()) !== 'Activé') throw new Error('au démarrage : ' + (await statut()));
+    const cocher = (v) => win.webContents.executeJavaScript(`(() => { const c = document.getElementById('chkSansReception');
+      c.checked = ${v}; c.dispatchEvent(new Event('change')); return localStorage.getItem('castunn.sansReception'); })()`);
+    if ((await cocher(true)) !== '1') throw new Error('choix non retenu');
+    if ((await statut()) !== 'Désactivé') throw new Error('case cochée : ' + (await statut()));
+    if ((await cocher(false)) !== '0') throw new Error('choix non retenu');
+    if ((await statut()) !== 'Activé') throw new Error('case décochée : ' + (await statut()));
   });
 
   // Transfert binaire de bout en bout : c'est le pipeline unifié qui travaille.

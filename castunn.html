@@ -35,7 +35,7 @@
     <section id="emitter" class="card hidden">
       <h2>Emetteur</h2>
       <div>
-        <label for="mediaUrl">URL (audio/vidéo/image)</label>
+        <label for="mediaUrl">URL (audio/vidéo/image/YouTube)</label>
         <div class="row">
           <input type="url" id="mediaUrl" placeholder="https://.../fichier.mp4" />
           <button id="btnSendMediaUrl">Envoyer URL</button>
@@ -69,6 +69,7 @@
             <audio id="localAudio" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback"></audio>
             <video id="localVideo" controls class="hidden" preload="metadata" controlsList="nodownload noplaybackrate noremoteplayback" disablePictureInPicture></video>
             <img id="localImage" alt="Image locale" style="display:none;max-width:100%;height:auto;border-radius:8px" />
+            <div id="localYoutube" class="lecteur-youtube" hidden></div>
           </div>
           <div class="row" style="margin-top:6px">
             <button id="localClose">Fermer</button>
@@ -82,17 +83,12 @@
     <!-- Récepteur -->
     <section id="receiver" class="card">
       <h2>Récepteur</h2>
-      <div class="row">
-        <button id="btnActivate">Activer</button>
-        <button id="btnDeactivate">Désactiver</button>
-      </div>
 
       <!-- Une vignette par émetteur : plusieurs pairs peuvent diffuser à la fois. -->
       <div id="receptions" class="receptions"></div>
       <div id="receptionsVide" class="muted" style="margin-top:10px">Rien reçu pour l’instant.</div>
 
       <div id="recvError" class="muted" style="color:var(--error);margin-top:8px"></div>
-      <small class="muted">Astuce : « Activer » débloque éventuellement l’autoplay (protection du navigateur).</small>
     </section>
 
     <!-- Tchat (visible en permanence) : largeur = un panneau -->
@@ -170,6 +166,16 @@
 			</p>
 		  </div>
 		  <div class="settings-row">
+			<span class="settings-label">Réception</span>
+			<label class="settings-case">
+			  <input type="checkbox" id="chkSansReception" />
+			  <span>Ne pas recevoir les médias</span>
+			</label>
+			<p style="font-size:12px;color:#7f849a;margin:4px 0 0">
+			  Pour une connexion limitée, ou pour seulement envoyer : rien n'est téléchargé, et l'émetteur est prévenu (« non lu »). S'applique aussitôt.
+			</p>
+		  </div>
+		  <div class="settings-row">
 			<label class="settings-label" for="qualitePartage">Limiter la qualité du partage d'écran</label>
 			<select id="qualitePartage" class="settings-input">
 			  <option value="1080p30">1080p, 30 images/s</option>
@@ -206,6 +212,7 @@
   import { createMesh } from './src/renderer/rtc-mesh.js';
   import { resumerMaillage } from './src/renderer/mesh-status.js';
   import { createReceptionTiles } from './src/renderer/reception-tiles.js';
+  import { videoYoutube, creerLecteurYoutube } from './src/renderer/youtube.js';
   import { createEssaim } from './src/renderer/essaim.js';
   import { VERSION, DATE_VERSION } from './src/renderer/version.js';
   import { nouveauCode, normaliserCode, formaterCode, identifiantSalle } from './src/renderer/salle.js';
@@ -783,6 +790,8 @@
   attachSyncSender(localAudio);
   attachSyncSender(localVideo);
   const localImage  = document.getElementById('localImage');
+  const localYoutube = document.getElementById('localYoutube');
+  let localYt = null; // lecteur YouTube de l'émetteur (src/renderer/youtube.js)
   const localErr    = document.getElementById('localErr');
   const localClose  = document.getElementById('localClose');
   const localPlaceholder = document.getElementById('localPlaceholder');
@@ -815,6 +824,8 @@
     try { localAudio.removeAttribute('src'); localAudio.load(); } catch {}
     try { localVideo.removeAttribute('src'); localVideo.load(); } catch {}
     try { localImage.removeAttribute('src'); } catch {}
+    if (localYt) { localYt.detruire(); localYt = null; }
+    localYoutube.hidden = true;
     localAudio.classList.add('hidden');
     localVideo.classList.add('hidden');
     localImage.style.display = 'none';
@@ -855,6 +866,19 @@ function showLocalImage(url){
   lastLocalURL = url; // ← idem (pour la cohérence)
   localPlaceholder.classList.add('hidden');
   localImage.src = url; localImage.style.display = 'block';
+  showLocalPanel();
+}
+
+/** Vidéo YouTube envoyée : notre lecteur pilote celui des autres (play, pause, déplacement). */
+function showLocalYoutube({ id, debut }){
+  localStopAll();
+  localPlaceholder.classList.add('hidden');
+  localYoutube.hidden = false;
+  localYt = creerLecteurYoutube(localYoutube, {
+    id, debut,
+    surAction: (action, time) => { if (iAmEmitter) sendApp({ type: 'sync', action, time }); },
+    surErreur: (texte) => { localErr.textContent = texte; }
+  });
   showLocalPanel();
 }
 
@@ -1465,6 +1489,14 @@ function showLocalImage(url){
   btnSendMediaUrl.onclick = async () => {
     const url = mediaUrl.value.trim();
     if (!url) return;
+    // Lien YouTube : seul l'identifiant circule, chacun lit dans le lecteur
+    // de YouTube, piloté par le nôtre.
+    const yt = videoYoutube(url);
+    if (yt) {
+      iAmEmitter = true;
+      if (sendApp({ type: 'youtube', id: yt.id, debut: yt.debut })) { ctrlError.textContent = ''; showLocalYoutube(yt); }
+      return;
+    }
     let type = typeDepuisUrl(url);
     if (!type) {
       btnSendMediaUrl.disabled = true;
@@ -1783,9 +1815,18 @@ function showLocalImage(url){
   chatSend.onclick = sendChat;
   chatInput.addEventListener('keydown', (e)=>{ if(e.key === 'Enter') sendChat(); });
 
-  /* === Récepteur : actions === */
-  document.getElementById('btnActivate').onclick = activate;
-  document.getElementById('btnDeactivate').onclick = deactivate;
+  /* === Récepteur : actif par défaut ==========================================
+   * Les boutons Activer / Désactiver ne servaient qu'à obtenir un clic pour
+   * l'autoplay ; Electron l'autorise (main.js), et le récepteur désactivé par
+   * défaut faisait surtout rater le premier média. Ne plus rien recevoir
+   * reste possible : Paramètres → Optimisations, préférence du poste.
+   * --------------------------------------------------------------------- */
+  const SANS_RECEPTION_CLE = 'castunn.sansReception';
+  const chkSansReception = document.getElementById('chkSansReception');
+  chkSansReception.addEventListener('change', () => {
+    try { localStorage.setItem(SANS_RECEPTION_CLE, chkSansReception.checked ? '1' : '0'); } catch {}
+    if (chkSansReception.checked) deactivate(); else activate();
+  });
 
   function activate(){
     isActivated = true;
@@ -1942,7 +1983,7 @@ function showLocalImage(url){
   }
 
   const BLOBS_ANCIENS = { audioBlob: 'audio', videoBlob: 'video', imageBlob: 'image', fileBlob: 'file' };
-  const ANNONCES_MEDIA = new Set(['audio', 'video', 'image', 'file', 'binary-meta']);
+  const ANNONCES_MEDIA = new Set(['audio', 'video', 'image', 'file', 'binary-meta', 'youtube']);
 
   /**
    * Un message d'application, par le WebSocket ou en P2P, traité selon son
@@ -1985,6 +2026,16 @@ function showLocalImage(url){
       ctrlError.textContent = '';
       recvError.textContent = '';
       sendConfirmation(`${getDisplayName()} — Stop reçu (${via})`, de);
+      return;
+    }
+
+    if (msg.type === 'youtube') {
+      // Identifiant revérifié : il finit dans l'adresse du lecteur.
+      const yt = videoYoutube(`https://youtu.be/${msg.id}`);
+      if (!yt) return;
+      libererFlux(qui);
+      tuiles.afficherYoutube(qui, { id: yt.id, debut: Number(msg.debut) || 0 }, creerLecteurYoutube);
+      sendConfirmation(`${userIP} a reçu la vidéo YouTube (${via})`, de);
       return;
     }
 
@@ -2315,6 +2366,9 @@ function showLocalImage(url){
     log: (texte) => addConsole(texte)
   });
 
+  // Lecteurs YouTube (le nôtre, ceux des vignettes) : diagnostic et tests.
+  window.__castunnYoutube = { local: () => localYt, de: (id) => tuiles.lecteur(id) };
+
   // Compteurs (octets envoyés, doublons) : diagnostic et tests.
   window.__castunnEssaim = essaim.stats;
 
@@ -2539,10 +2593,13 @@ function showLocalImage(url){
     if (src && (!flux || src === flux)) tuiles.arreter(de);
   }
 	
-  // Par défaut avant toute interaction : mode récepteur, désactivé
-  receiverCard.classList.remove('hidden'); 
+  // Par défaut : mode récepteur, actif — sauf si ce poste a choisi de ne rien recevoir.
+  receiverCard.classList.remove('hidden');
   emitterCard.classList.add('hidden');
-  deactivate();
+  let sansReception = false;
+  try { sansReception = localStorage.getItem(SANS_RECEPTION_CLE) === '1'; } catch {}
+  chkSansReception.checked = sansReception;
+  if (sansReception) deactivate(); else activate();
   if (!window.__nickname) window.__nickname = userNick;
 
   // Plage de ports UDP de WebRTC (Electron seulement) : une plage saturée

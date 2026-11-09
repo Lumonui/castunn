@@ -303,24 +303,6 @@ button:focus-visible {
   border-color: rgba(243,139,168,.45);
 }
 
-/* Boutons d'activation / désactivation */
-#btnActivate {
-  border-color: rgba(166,227,161,.25);
-  color: var(--ok);
-}
-#btnActivate:hover {
-  background: rgba(166,227,161,.1);
-  border-color: rgba(166,227,161,.45);
-}
-
-#btnDeactivate {
-  border-color: rgba(243,139,168,.2);
-  color: var(--ko);
-}
-#btnDeactivate:hover {
-  background: rgba(243,139,168,.08);
-  border-color: rgba(243,139,168,.4);
-}
 
 /* ── Row ────────────────────────────────────────────────────── */
 .row {
@@ -686,6 +668,15 @@ strong {
 }
 .tuile .tuile-fermer:hover { background: rgba(255,255,255,.08); color: var(--fg); }
 .tuile audio, .tuile video { width: 100%; }
+/* Lecteur YouTube : l'iframe de YouTube, au format 16:9. */
+.tuile-youtube iframe, .lecteur-youtube iframe {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: var(--radius);
+}
 .tuile-image {
   max-width: 100%;
   height: auto;

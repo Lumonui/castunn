@@ -95,7 +95,6 @@ async function ouvrir(nom, { navigateur }) {
   await js(p, `window.__nickname = ${JSON.stringify(nom)}; true`);
   await waitUntil(async () => (await js(p, 'document.getElementById("wsStatus").textContent')) === 'Connecté',
     { label: `${nom} connecté` });
-  await js(p, 'document.getElementById("btnActivate").click(); true');
   p.id = await js(p, `(document.getElementById('consoleLog').textContent.match(/myId=([a-z0-9]+)/) || [])[1]`);
   return p;
 }

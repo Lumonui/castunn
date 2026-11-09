@@ -58,6 +58,10 @@ export function createReceptionTiles({
     image.className = 'tuile-image';
     image.alt = 'Image reçue';
     image.hidden = true;
+    // Lecteur YouTube (lien envoyé) : créé à la demande, détruit par vider().
+    const youtube = doc.createElement('div');
+    youtube.className = 'tuile-youtube';
+    youtube.hidden = true;
     // Fermer une seule vignette (celle d'un émetteur parti, par exemple),
     // sans toucher aux autres.
     const fermer = doc.createElement('button');
@@ -67,9 +71,9 @@ export function createReceptionTiles({
     fermer.title = 'Fermer cette vignette';
     fermer.setAttribute('aria-label', 'Fermer cette vignette');
     fermer.addEventListener('click', () => (surFermer ? surFermer(de) : arreter(de)));
-    fig.append(titre, fermer, audio, video, image);
+    fig.append(titre, fermer, audio, video, image, youtube);
     conteneur.append(fig);
-    const t = { de, fig, titre, audio, video, image };
+    const t = { de, fig, titre, audio, video, image, youtube, yt: null };
     tuiles.set(de, t);
     majConteneur();
     return t;
@@ -89,11 +93,20 @@ export function createReceptionTiles({
     t.video.onerror = null;
     t.image.removeAttribute('src');
     t.image.hidden = true;
+    if (t.yt) { t.yt.detruire(); t.yt = null; }
+    t.youtube.hidden = true;
   }
+
+  // Navigateur sans clic préalable dans la page : la lecture automatique est
+  // refusée. Rien de cassé — le lecteur est là, il suffit d'appuyer.
+  const AUTOPLAY_REFUSE = 'Lecture automatique bloquée par le navigateur : appuyez sur lecture.';
 
   function lire(el) {
     if (!actif()) return;
-    el.play().catch((e) => { if (e.name !== 'AbortError') erreur(e.message); });
+    el.play().catch((e) => {
+      if (e.name === 'NotAllowedError') erreur(AUTOPLAY_REFUSE);
+      else if (e.name !== 'AbortError') erreur(e.message);
+    });
   }
 
   function arreter(de) {
@@ -145,6 +158,8 @@ export function createReceptionTiles({
       };
       if (actif()) {
         t.video.play().catch((e) => {
+          if (e.name === 'AbortError') return;
+          if (e.name === 'NotAllowedError') { erreur(AUTOPLAY_REFUSE); return; }
           erreur(e.message);
           telecharger(url, nom);
         });
@@ -156,6 +171,14 @@ export function createReceptionTiles({
       vider(t);
       t.image.src = url;
       t.image.hidden = false;
+    },
+
+    /** Vidéo YouTube, dans le lecteur de YouTube (`creer` : creerLecteurYoutube). */
+    afficherYoutube(de, { id, debut = 0 }, creer) {
+      const t = tuile(de);
+      vider(t);
+      t.youtube.hidden = false;
+      t.yt = creer(t.youtube, { id, debut, auto: actif(), surErreur: erreur });
     },
 
     /** Flux en direct (partage d'écran). false s'il était déjà affiché. */
@@ -173,6 +196,7 @@ export function createReceptionTiles({
     lecteur(de) {
       const t = tuiles.get(de);
       if (!t) return null;
+      if (t.yt) return t.yt;
       if (!t.video.classList.contains('hidden')) return t.video;
       if (!t.audio.classList.contains('hidden')) return t.audio;
       return null;
